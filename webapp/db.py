@@ -73,6 +73,20 @@ CREATE TABLE IF NOT EXISTS card_tags (
 
 CREATE INDEX IF NOT EXISTS idx_card_tags_card ON card_tags(card_id);
 CREATE INDEX IF NOT EXISTS idx_card_tags_tag  ON card_tags(tag_id);
+
+-- Point-in-time price log. One row per recorded snapshot. The Detail
+-- screen reads this to draw the price chart. Rows are appended whenever
+-- a card's current_market_price changes (via PATCH or refresh-price flow).
+CREATE TABLE IF NOT EXISTS price_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id     INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    recorded_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    price_usd   REAL    NOT NULL,
+    source      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_history_card_time
+    ON price_history(card_id, recorded_at);
 """
 
 SEED_USERS = [("Ro", "#3b82f6"), ("Reid", "#10b981"), ("Ryan", "#f59e0b")]
@@ -159,6 +173,12 @@ def init_db():
                     (u["id"], tname, tcolor, 1 if is_trade else 0),
                 )
         conn.commit()
+    # Backfill outside the schema transaction so its own commit is clean.
+    try:
+        backfill_price_history()
+    except Exception:
+        # Backfill is convenience-only — don't crash startup if it fails.
+        pass
 
 
 @contextmanager
@@ -269,8 +289,102 @@ def delete_card(card_id: int) -> bool:
 
 
 def update_market_price(card_id: int, price: float) -> Optional[Card]:
-    return update_card(card_id, current_market_price=price,
+    card = update_card(card_id, current_market_price=price,
                        last_priced_at=datetime.utcnow().isoformat())
+    # Best-effort log; never block the update if logging fails.
+    try:
+        log_price(card_id, price)
+    except Exception:
+        pass
+    return card
+
+
+# ---------------------------------------------------------------------------
+# Price history
+# ---------------------------------------------------------------------------
+
+def log_price(card_id: int, price_usd: float, source: Optional[str] = None,
+              at: Optional[str] = None) -> None:
+    """Append a row to price_history for this card. Idempotent against
+    duplicates: if the most-recent row has the same price within the last
+    60 seconds we skip — protects against double-logging when the UI
+    re-fires refresh in quick succession."""
+    if price_usd is None:
+        return
+    with connect() as conn:
+        last = conn.execute(
+            "SELECT recorded_at, price_usd FROM price_history "
+            "WHERE card_id = ? ORDER BY recorded_at DESC LIMIT 1",
+            (card_id,),
+        ).fetchone()
+        if last and abs(float(last["price_usd"]) - float(price_usd)) < 0.005:
+            # Same price as last logged snapshot — don't spam the history.
+            return
+        if at:
+            conn.execute(
+                "INSERT INTO price_history (card_id, recorded_at, price_usd, source) "
+                "VALUES (?, ?, ?, ?)",
+                (card_id, at, float(price_usd), source),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO price_history (card_id, price_usd, source) "
+                "VALUES (?, ?, ?)",
+                (card_id, float(price_usd), source),
+            )
+        conn.commit()
+
+
+def get_price_history(card_id: int, *, since: Optional[str] = None,
+                      limit: Optional[int] = None) -> list[dict]:
+    """Return [{at, price}] for a card, oldest first. Optionally filter
+    by ISO timestamp `since` and cap rows with `limit` (newest kept)."""
+    with connect() as conn:
+        if since:
+            rows = conn.execute(
+                "SELECT recorded_at, price_usd FROM price_history "
+                "WHERE card_id = ? AND recorded_at >= ? "
+                "ORDER BY recorded_at ASC",
+                (card_id, since),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT recorded_at, price_usd FROM price_history "
+                "WHERE card_id = ? ORDER BY recorded_at ASC",
+                (card_id,),
+            ).fetchall()
+        out = [{"at": r["recorded_at"], "price": float(r["price_usd"])} for r in rows]
+        if limit and len(out) > limit:
+            out = out[-limit:]
+        return out
+
+
+def backfill_price_history() -> int:
+    """Seed price_history for cards that have current_market_price but no
+    history rows yet. Inserts a single row dated at last_priced_at (or
+    created_at) so the chart shows at least one anchor point. Returns the
+    number of rows inserted. Idempotent."""
+    inserted = 0
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT c.id, c.current_market_price, "
+            "       COALESCE(c.last_priced_at, c.created_at) AS at "
+            "FROM cards c "
+            "LEFT JOIN price_history ph ON ph.card_id = c.id "
+            "WHERE c.current_market_price IS NOT NULL "
+            "GROUP BY c.id "
+            "HAVING COUNT(ph.id) = 0"
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                "INSERT INTO price_history (card_id, recorded_at, price_usd, source) "
+                "VALUES (?, ?, ?, ?)",
+                (r["id"], r["at"], float(r["current_market_price"]), "backfill"),
+            )
+            inserted += 1
+        if inserted:
+            conn.commit()
+    return inserted
 
 
 # ---------------------------------------------------------------------------

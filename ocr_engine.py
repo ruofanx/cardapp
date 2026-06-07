@@ -233,17 +233,60 @@ only a single JSON object.
 
 Schema:
 {
-  "name": "Pokemon name as printed (include trainer prefix like Sabrina's Alakazam)",
-  "set_name": "set/expansion name",
+  "name": "Pokemon name as printed (include trainer prefix like Sabrina's Alakazam or Team Rocket's Moltres)",
+  "set_name": "set/expansion name in full English",
   "card_number": "printed number with denominator (137/086) or just the number",
   "language": "english | japanese",
-  "variant": "Holo | Reverse Holo | Full Art | Illustration Rare | Special Art Rare | Alt Art | Rainbow Rare | 1st Edition | Promo | null",
+  "variant": "Holo | Reverse Holo | Full Art | Illustration Rare | Special Art Rare | Special Illustration Rare | Hyper Rare | Alt Art | Rainbow Rare | Gold Secret Rare | 1st Edition | Promo | null",
   "confidence": 0..1
 }
 
 Rules:
 - If you can't read the card number, set it to "" (empty string).
-- ASCII names ("Pokemon" not "Pokémon").
+- ASCII names ("Pokemon" not "Pokémon"). Use the apostrophe form for trainer-owned
+  Pokemon ("Team Rocket's Moltres ex", "Sabrina's Alakazam", "N's Zekrom").
+
+LANGUAGE DETECTION:
+- "japanese" if the card text uses kana (ひらがな/カタカナ) or kanji (漢字).
+  Vintage JP Gym/Neo/Base cards have names like "ナツメのフーディン" (Sabrina's
+  Alakazam JP). The "Pokémon" trademark line at the bottom is also Japanese.
+- "english" if the card text is all in Latin letters with English game text.
+- When the card name is Japanese, ALWAYS translate it to its standard English
+  name in the `name` field (e.g. "ナツメのフーディン" → "Sabrina's Alakazam").
+
+1ST EDITION RULES (this matters — wrong call inflates price 2-5×):
+- "1st Edition" is an ENGLISH-ONLY print designation marked by a small black
+  badge/stamp reading "Edition 1" or "1st Edition" on the lower-left of the
+  card's illustration window. It only appears on Wizards-era (Base→Neo) and
+  some EX-era English cards.
+- JAPANESE CARDS NEVER use "1st Edition". JP Gym/Neo/Base sets had a single
+  print run with no equivalent stamp. If the card is Japanese, variant must
+  NOT be "1st Edition" — use "Holo" (for Rare Holo) or null instead.
+- Modern English cards (Scarlet & Violet era, 2023+) don't have 1st Edition.
+- Only return "1st Edition" if you can VISUALLY confirm the stamp is on the
+  card. When in doubt, return "Holo" / "Unlimited" / null — NEVER guess
+  "1st Edition" just because the card looks vintage.
+
+GRADED-SLAB LABELS (PSA, CGC, BGS, SGC): the label sits ABOVE the card image.
+Read it carefully — it tells you the set and variant explicitly. Common
+abbreviations and their meanings:
+  FA = Full Art         SAR = Special Art Rare / Special Illustration Rare
+  SIR = Special Illustration Rare        SR = Secret Rare
+  HR = Hyper Rare       AR = Illustration Rare        UR = Ultra Rare
+  GOLD = Gold Secret    RKT = Team Rocket             GLORY = Glory of
+  TR = Team Rocket      ROCKET GANG = Glory of Team Rocket (SV10)
+For Japanese slabs you'll often see "P.M. JAPANESE SV" + an abbreviated set:
+  "GLORY/RKT. GANG" or "ROCKET GANG"  → set_name "Glory of Team Rocket"
+  "CRIMSON HAZE"                       → set_name "Crimson Haze"
+  "BATTLE PARTNERS"                    → set_name "Battle Partners"
+  "TERASTAL FES EX" / "TERASTAL FESTIVAL" → set_name "Terastal Festival ex"
+  "151"                                → set_name "Pokemon Card 151"
+  "WHITE FLARE"                        → set_name "White Flare"
+  "BLACK BOLT"                         → set_name "Black Bolt"
+If the slab label says "FA" or "SAR" or "SIR", set variant to "Special Art Rare".
+If "HR" or "HYPER", set variant to "Hyper Rare". If "GOLD" or "SECRET" (alone),
+"Gold Secret Rare". If "SR" + a rainbow/iridescent look, "Special Art Rare".
+
 - JSON only, no backticks, no prose.
 """
 
@@ -252,15 +295,33 @@ DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 _BILLING_ERROR_HINTS = (
+    # Billing / quota — the original triggers
     "credit balance is too low",
     "billing",
     "insufficient",
     "quota",
     "exceeded your current quota",
+    "resource has been exhausted",
+    "rate limit",
+    "rate_limit",
+    # Auth — a broken/invalid/revoked key on the primary should fall back
+    # to the secondary provider, not 500 the request. Same intent: "this
+    # provider can't serve right now; try the other one."
+    "api key not valid",
+    "invalid api key",
+    "invalid_api_key",
+    "authentication",
+    "unauthorized",
+    "permission denied",
+    "permission_denied",
 )
 
 
 def _looks_like_billing_error(exc: Exception) -> bool:
+    """True for billing, quota, rate-limit, AND auth failures. Both kinds
+    mean "the primary LLM provider can't serve this request right now",
+    so the fallback should fire when an alternate key is configured.
+    """
     return any(hint in str(exc).lower() for hint in _BILLING_ERROR_HINTS)
 
 
@@ -276,42 +337,58 @@ def _gemini_model(m: Optional[str]) -> str:
 
 
 def identify_with_llm(image_path: str, model: Optional[str] = None):
-    """Pick a provider based on env vars, dispatch to the right backend.
+    """Identify a card via Gemini (default) with Claude as a last-resort fallback.
 
-    Provider preference, in order:
-      1. LLM_PROVIDER env var ("anthropic" | "gemini") — explicit override
-      2. ANTHROPIC_API_KEY set → try Anthropic first; auto-fallback to Gemini
-         if the call fails with a billing/quota error AND GOOGLE_API_KEY is set
-      3. GOOGLE_API_KEY set    → Gemini
+    Hard rule: if GOOGLE_API_KEY is set, Gemini is used. Claude is only
+    touched when GOOGLE_API_KEY is missing entirely, OR when Gemini
+    returns a quota/billing error AND ANTHROPIC_API_KEY is set.
 
-    The `model` parameter is only honoured when it matches the chosen
-    provider; otherwise the provider's default is used.
+    The `LLM_PROVIDER` env var can force one provider explicitly, but
+    "anthropic" is honored only when GOOGLE_API_KEY isn't set — preventing
+    the previous footgun where an old env var routed everything to Claude
+    even after the user moved billing to Google.
     """
-    explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
-    has_anthropic_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
     has_gemini_key = bool(os.environ.get("GOOGLE_API_KEY"))
+    has_anthropic_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    explicit = os.environ.get("LLM_PROVIDER", "").strip().lower()
 
-    if explicit == "anthropic":
-        return _identify_with_anthropic(image_path, _claude_model(model))
-    if explicit == "gemini":
-        return _identify_with_gemini(image_path, _gemini_model(model))
+    if not has_gemini_key and not has_anthropic_key:
+        raise RuntimeError(
+            "No LLM key configured. Set GOOGLE_API_KEY (free, "
+            "https://aistudio.google.com/apikey) or ANTHROPIC_API_KEY."
+        )
 
-    if has_anthropic_key:
-        try:
+    # If the user explicitly forces a provider AND has its key, honor it.
+    if explicit == "anthropic" and has_anthropic_key and not has_gemini_key:
+        primary, fallback = "anthropic", None
+    elif explicit == "gemini" and has_gemini_key:
+        primary, fallback = "gemini", "anthropic" if has_anthropic_key else None
+    elif has_gemini_key:
+        # DEFAULT — Gemini wins whenever its key exists. This is the path
+        # the user asked for after moving billing to Google.
+        primary, fallback = "gemini", "anthropic" if has_anthropic_key else None
+    else:
+        primary, fallback = "anthropic", None
+
+    log.info("OCR provider: primary=%s fallback=%s "
+             "(has_gemini=%s has_anthropic=%s LLM_PROVIDER=%r)",
+             primary, fallback, has_gemini_key, has_anthropic_key, explicit)
+
+    def _run(provider: str):
+        if provider == "anthropic":
             return _identify_with_anthropic(image_path, _claude_model(model))
-        except Exception as e:
-            if has_gemini_key and _looks_like_billing_error(e):
-                log.warning("Anthropic call failed with billing error; falling back to Gemini: %s", e)
-                return _identify_with_gemini(image_path, _gemini_model(model))
-            raise
-
-    if has_gemini_key:
         return _identify_with_gemini(image_path, _gemini_model(model))
 
-    raise RuntimeError(
-        "No LLM provider configured. Set ANTHROPIC_API_KEY or GOOGLE_API_KEY. "
-        "Get a free Gemini key at https://aistudio.google.com/apikey"
-    )
+    try:
+        return _run(primary)
+    except Exception as e:
+        if fallback and _looks_like_billing_error(e):
+            log.warning(
+                "%s returned a quota/billing error (%s) — falling back to %s",
+                primary, e, fallback,
+            )
+            return _run(fallback)
+        raise
 
 
 def _identify_with_anthropic(image_path: str, model: str):
@@ -373,13 +450,28 @@ def _identify_with_gemini(image_path: str, model: str):
 
 def _build_identity_from_json(raw: str):
     parsed = _parse_llm_json(raw)
+    language = parsed["language"].strip().lower()
+    variant = (parsed.get("variant") or None)
+
+    # SANITY-FILTER for the LLM's variant guess. The model occasionally
+    # hallucinates "1st Edition" on vintage-looking holos that don't
+    # actually carry the stamp — most often on Japanese cards (which
+    # never used the 1st Edition designation at all). Server-side
+    # enforcement so a bad LLM output doesn't pollute downstream pricing.
+    if variant and language == "japanese":
+        v = variant.strip().lower()
+        if v in ("1st edition", "first edition", "1st ed", "edition 1"):
+            log.info("Dropping LLM variant=%r on JP card — Japanese sets "
+                     "have no 1st Edition; defaulting to Holo.", variant)
+            variant = "Holo"
+
     return (
         CardIdentity(
             name=parsed["name"].strip(),
             set_name=parsed.get("set_name", "").strip(),
             card_number=parsed.get("card_number", "").strip(),
-            language=parsed["language"].strip().lower(),
-            variant=(parsed.get("variant") or None),
+            language=language,
+            variant=variant,
         ),
         float(parsed.get("confidence", 0.5)),
         raw,
@@ -467,6 +559,32 @@ def _replace_card_number(identity, new_number):
 # Top-level
 # ---------------------------------------------------------------------------
 
+def _correct_identity(identity: "CardIdentity") -> "CardIdentity":
+    """Apply post-hoc sanity rules to a CardIdentity regardless of whether it
+    came from a fresh LLM call OR the cache. Runs on every identify_card path.
+
+    Currently strips "1st Edition" from Japanese cards (JP printings never
+    used the 1st Edition designation; the LLM occasionally hallucinates it
+    on vintage holos and the bad variant routes to the 2-5× 1st Ed price tier).
+    """
+    if not identity:
+        return identity
+    variant = identity.variant
+    language = (identity.language or "").strip().lower()
+    if variant and language == "japanese":
+        v = variant.strip().lower()
+        if v in ("1st edition", "first edition", "1st ed", "edition 1"):
+            log.info("Cache-read correction: dropping variant=%r on JP %r "
+                     "(JP sets have no 1st Edition; defaulting to Holo)",
+                     variant, identity.name)
+            return CardIdentity(
+                name=identity.name, set_name=identity.set_name,
+                card_number=identity.card_number,
+                language=identity.language, variant="Holo",
+            )
+    return identity
+
+
 def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_ocr=True):
     if cache is None:
         cache = IdentifyCache()
@@ -475,13 +593,27 @@ def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_oc
 
     cached = cache.lookup(phash)
     if cached:
+        # Apply the JP→no-1st-Edition correction to cached entries too —
+        # the cache may contain stale identities from before this fix
+        # shipped. Cheap idempotent rewrite; persist the fix so subsequent
+        # reads of the same pHash don't need to re-correct.
+        corrected = _correct_identity(cached.identity)
+        if corrected is not cached.identity:
+            cached.identity = corrected
+            cached.notes.append("auto-corrected variant (JP cards have no 1st Edition)")
+            try:
+                cache.store(cached)
+            except Exception as e:
+                log.warning("could not persist corrected cache entry: %s", e)
         return cached
 
     identity, confidence, raw_json = identify_with_llm(image_path, model=llm_model)
+    identity = _correct_identity(identity)
     notes = []
 
     prior = cache.lookup_by_identity(identity)
     if prior:
+        prior.identity = _correct_identity(prior.identity)
         prior.notes.append(f"new pHash for known identity ({cache.photo_count_for(identity)} photos so far)")
         prior.phash = phash
         cache.store(prior)

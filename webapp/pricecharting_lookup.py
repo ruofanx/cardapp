@@ -108,10 +108,18 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
                     variant: Optional[str] = None) -> list[str]:
     """Generate plausible PriceCharting URLs to try in order.
 
-    For older cards 1st Edition / Shadowless are SEPARATE pages on PC
-    (different set slugs like `pokemon-base-set-1st-edition`). When the
-    caller provides such a variant, we try those slug variants FIRST so we
-    don't accidentally return Unlimited prices for a 1st Edition card.
+    PriceCharting's slug scheme is annoyingly card-specific:
+      - Some cards have ONE page that covers all prints (Fossil Gengar at
+        `gengar-5` has Unlimited Holo data; there's no `gengar-holo-5`).
+      - Other cards have SEPARATE pages per print: Team Rocket Dark Dragonite
+        has `dark-dragonite-5` (non-holo) AND `dark-dragonite-holo-5` (Holo
+        Unlimited, the one whose PSA 9 trades at ~$445).
+      - 1st Edition is usually a separate page: `dark-dragonite-1st-edition-5`.
+
+    We can't predict which form a given card uses, so we generate the
+    likely candidates and try them in order. The fetcher skips any URL
+    that redirects to `/search-products` (PriceCharting's "no such page"
+    behaviour), so dead variants drop out automatically.
     """
     name_slug = _slug(name)
     num = _normalize_card_number(card_number)
@@ -123,30 +131,59 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
 
     base_slugs = list(dict.fromkeys([_slug(s) for s in (set_clean, set_no_tg, raw_set) if s]))
 
-    # Apply variant suffix to the SET slug for separate-page variants
-    variant_suffix = ""
-    if variant:
-        v = variant.strip().lower()
-        if v in ("1st edition", "first edition"):
-            variant_suffix = "-1st-edition"
-        elif v == "shadowless":
-            variant_suffix = "-shadowless"
+    # ----- Detect variant flags from the user/LLM-provided variant string ----
+    v = (variant or "").strip().lower()
+    is_holo       = "holo" in v and "reverse" not in v
+    is_first_ed   = "1st" in v or "first edition" in v
+    is_shadowless = "shadowless" in v
+    is_reverse    = "reverse" in v
+
+    # ----- Name-slug qualifiers: try most specific first ----------------------
+    # The qualifier is inserted between the card name and the number, e.g.
+    # `dark-dragonite-holo-5` or `dark-dragonite-1st-edition-5`. We always
+    # include the plain `name-num` as a final fallback because some cards
+    # (Fossil Gengar) put all data on the default page.
+    name_qualifiers: list[str] = []
+    if is_first_ed and is_holo:
+        name_qualifiers += ["1st-edition-holo", "holo-1st-edition", "1st-edition", "holo"]
+    elif is_first_ed:
+        name_qualifiers += ["1st-edition"]
+    elif is_holo:
+        name_qualifiers += ["holo"]
+    elif is_shadowless:
+        name_qualifiers += ["shadowless"]
+    elif is_reverse:
+        name_qualifiers += ["reverse-holo"]
+    name_qualifiers.append("")    # plain name-num — final fallback
+
+    # ----- Set-slug variants: some cards use `set-1st-edition` instead --------
+    set_variant_suffix = ""
+    if v in ("1st edition", "first edition"):
+        set_variant_suffix = "-1st-edition"
+    elif v == "shadowless":
+        set_variant_suffix = "-shadowless"
 
     set_variants: list[str] = []
-    if variant_suffix:
-        # Try with the suffix FIRST so the strict variant page wins
-        set_variants.extend(s + variant_suffix for s in base_slugs)
+    if set_variant_suffix:
+        set_variants.extend(s + set_variant_suffix for s in base_slugs)
     set_variants.extend(base_slugs)
-    # Dedupe while preserving order
     seen = set()
     set_variants = [s for s in set_variants if not (s in seen or seen.add(s))]
 
     jp_prefix = "japanese-" if language.lower() == "japanese" else ""
 
+    # Build URLs: outer loop set variants, inner loop name qualifiers
     urls: list[str] = []
     for set_slug in set_variants:
-        urls.append(f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{num}")
-    return urls
+        for qual in name_qualifiers:
+            if qual:
+                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{qual}-{num}"
+            else:
+                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{num}"
+            urls.append(url)
+    # Final dedupe preserving order
+    out_seen = set()
+    return [u for u in urls if not (u in out_seen or out_seen.add(u))]
 
 
 # ---------------------------------------------------------------------------

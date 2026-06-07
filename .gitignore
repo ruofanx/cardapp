@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# Databases & caches
+*.sqlite
+*.sqlite-journal
+*.sqlite.bak*
+
+# Uploads / user photos
+webapp/uploads/
+
+# Dev artifacts
+webapp/static_old/
+webapp/testfile.txt
+.DS_Store
+*.heic
+*.HEIC

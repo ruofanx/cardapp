@@ -142,42 +142,91 @@ class EbayHtmlFetcher(Fetcher):
         return parse_ebay_sold_html(html, period_days=period_days)
 
 
-_SOLD_LISTING_RE = re.compile(
-    r'>Sold\s+([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4})<'
-    r'.*?'
-    r'<span class="su-styled-text primary default">'
-    r'([^<]+)'
-    r'</span>'
-    r'.*?'
-    r'<span[^>]*class="[^"]*s-card__price[^"]*"[^>]*>'
-    r'\$?([0-9,]+\.[0-9]{2})',
-    re.DOTALL,
+_PRICE_RE = re.compile(r"\$\s*([\d,]+\.?\d*)")
+
+# Date format eBay uses in sold-listing pages: "Sold Jan  5, 2024" (may have
+# extra spaces). We match it wherever it appears in an item block.
+_SOLD_DATE_RE = re.compile(r'Sold\s+([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4})')
+
+# Price: try the current class name first, then common historical names, then
+# any bare dollar amount as a last resort.
+_ITEM_PRICE_RE = re.compile(
+    r'class="[^"]*s-item__price[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})'          # current
+    r'|class="[^"]*s-card__price[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})'         # legacy
+    r'|class="[^"]*notranslate[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})',           # alt
 )
 
-_PRICE_RE = re.compile(r"\$\s*([\d,]+\.?\d*)")
+# Title: role="heading" is the most stable anchor; fall back to known classes.
+_ITEM_TITLE_RE = re.compile(
+    r'role="heading"[^>]*>([^<]{8,})</span>'
+    r'|class="[^"]*s-item__title[^"]*"[^>]*>[^<]*<span[^>]*>([^<]{8,})</span>'
+    r'|class="[^"]*su-styled-text[^"]*"[^>]*>([^<]{8,})</span>',
+)
+
+# Item URL — href inside the item block's primary link.
+_ITEM_URL_RE = re.compile(r'href="(https://www\.ebay\.com/itm/[^"]+)"')
 
 
 def parse_ebay_sold_html(html: str, period_days: int = 30) -> list[SaleRecord]:
+    """Parse eBay sold-listings HTML into SaleRecord list.
+
+    Splits on per-item boundaries so each field is extracted independently
+    from a small block — avoids fragile cross-item dot-star matches and
+    survives minor eBay HTML changes more gracefully.
+    """
     cutoff = datetime.now() - timedelta(days=period_days)
     results: list[SaleRecord] = []
-    for date_str, title_raw, price_str in _SOLD_LISTING_RE.findall(html):
-        title = unescape(title_raw).strip()
-        if not title or title.lower().startswith("shop on ebay"):
+
+    # Split on the start of each result item.  eBay wraps each hit in a <li>
+    # with class "s-item"; splitting on that boundary keeps extraction local.
+    # The first chunk is page chrome before the first item — skip it.
+    blocks = re.split(r'<li\b[^>]*\bclass="[^"]*s-item\b', html)
+
+    for block in blocks[1:]:
+        # --- Sold date (required) ---
+        dm = _SOLD_DATE_RE.search(block)
+        if not dm:
             continue
         try:
-            sold_date = datetime.strptime(date_str, "%b %d, %Y")
+            sold_date = datetime.strptime(dm.group(1).strip(), "%b %d, %Y")
         except ValueError:
             continue
         if sold_date < cutoff:
             continue
+
+        # --- Price (required) ---
+        pm = _ITEM_PRICE_RE.search(block)
+        if not pm:
+            # last-resort: first bare $ amount in the block
+            fm = re.search(r'\$([\d,]+\.\d{2})', block)
+            if not fm:
+                continue
+            price_str = fm.group(1)
+        else:
+            price_str = next(g for g in pm.groups() if g is not None)
         try:
             price = float(price_str.replace(",", ""))
         except ValueError:
             continue
+
+        # --- Title (best-effort; empty string if not found) ---
+        tm = _ITEM_TITLE_RE.search(block)
+        if tm:
+            title = unescape(next(g for g in tm.groups() if g is not None)).strip()
+        else:
+            title = ""
+        if title.lower().startswith("shop on ebay"):
+            continue
+
+        # --- URL (optional) ---
+        um = _ITEM_URL_RE.search(block)
+        url = um.group(1).split("?")[0] if um else None  # strip tracking params
+
         results.append(SaleRecord(
             price_usd=price, sold_date=sold_date, title=title,
-            url=None, source="ebay-us",
+            url=url, source="ebay-us",
         ))
+
     return results
 
 

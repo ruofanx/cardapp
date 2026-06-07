@@ -57,6 +57,19 @@ SET_NAME_ALIASES = {
     "stellar miracle":                "SV7",
     "super electric breaker":         "SV7a",
     "paradise dragona":               "SV8",
+    # SV10 — "Glory of Team Rocket" (the slab label commonly reads
+    # "GLORY/RKT. GANG" or "ROCKET GANG" — handle both forms)
+    "glory of team rocket":           "SV10",
+    "sv: glory of team rocket":       "SV10",
+    "glory of team rocket gang":      "SV10",
+    "rocket gang":                    "SV10",
+    "ロケット団の栄光":               "SV10",
+    "crimson haze":                   "SV5a",
+    "sv: crimson haze":               "SV5a",
+    "クリムゾンヘイズ":               "SV5a",
+    # Common alt phrasings the LLM emits for already-mapped sets
+    "terastal fes ex":                "SV8a",
+    "battle partners ex":             "SV9a",
 }
 
 
