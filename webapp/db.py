@@ -130,6 +130,7 @@ class Card:
     notes: Optional[str] = None
     created_at: Optional[str] = None
     tags: list["Tag"] = field(default_factory=list)
+    product_type: str = "card"
 
     def gain_loss(self):
         if self.purchase_price is None or self.current_market_price is None:
@@ -164,6 +165,10 @@ def init_db():
             pass
         try:
             conn.execute("ALTER TABLE price_history ADD COLUMN source_url TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE cards ADD COLUMN product_type TEXT NOT NULL DEFAULT 'card'")
         except sqlite3.OperationalError:
             pass
         for name, color in SEED_USERS:
@@ -504,6 +509,9 @@ class PortfolioSummary:
     gain_loss_pct: float
     bulk_count: int
     untracked_count: int
+    sealed_count: int = 0
+    total_sealed_value: float = 0.0
+    total_cards_value: float = 0.0
 
 
 def portfolio_summary(user_id: int) -> PortfolioSummary:
@@ -511,17 +519,24 @@ def portfolio_summary(user_id: int) -> PortfolioSummary:
     if not user:
         raise ValueError(f"unknown user_id {user_id}")
     cards = list_cards(user_id)
-    total_purchase = sum(c.purchase_price or 0.0 for c in cards)
-    total_market = sum(c.current_market_price or 0.0 for c in cards)
-    bulk = sum(1 for c in cards if (c.current_market_price or 0) < 5)
+    card_items  = [c for c in cards if c.product_type == "card"]
+    sealed_items = [c for c in cards if c.product_type != "card"]
+    total_purchase    = sum(c.purchase_price or 0.0 for c in cards)
+    total_market      = sum(c.current_market_price or 0.0 for c in cards)
+    total_cards_value  = sum(c.current_market_price or 0.0 for c in card_items)
+    total_sealed_value = sum(c.current_market_price or 0.0 for c in sealed_items)
+    bulk     = sum(1 for c in card_items if (c.current_market_price or 0) < 5)
     untracked = sum(1 for c in cards if c.current_market_price is None)
     gain = total_market - total_purchase
-    pct = (gain / total_purchase * 100) if total_purchase > 0 else 0.0
+    pct  = (gain / total_purchase * 100) if total_purchase > 0 else 0.0
     return PortfolioSummary(
         user_id=user_id, user_name=user.name,
-        card_count=len(cards),
+        card_count=len(card_items),
+        sealed_count=len(sealed_items),
         total_purchase_price=round(total_purchase, 2),
         total_market_value=round(total_market, 2),
+        total_cards_value=round(total_cards_value, 2),
+        total_sealed_value=round(total_sealed_value, 2),
         unrealized_gain_loss=round(gain, 2),
         gain_loss_pct=round(pct, 2),
         bulk_count=bulk,
@@ -532,5 +547,6 @@ def portfolio_summary(user_id: int) -> PortfolioSummary:
 def _row_to_card(r) -> Card:
     d = dict(r)
     d["is_graded"] = bool(d.get("is_graded", 0))
+    d.setdefault("product_type", "card")
     # `tags` is populated separately by _attach_tags; the schema has no column.
     return Card(**d, tags=[])
