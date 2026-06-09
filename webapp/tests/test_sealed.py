@@ -54,3 +54,41 @@ def test_portfolio_summary_splits_cards_and_sealed(test_db):
     assert summary.total_market_value == 145.0
     assert summary.card_count == 1
     assert summary.sealed_count == 1
+
+
+# ---- pricing_engine tests ----
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+from pricing_engine import SealedProductQuery, build_ebay_sealed_url, is_relevant_sealed_title
+
+def test_build_ebay_sealed_url_booster_box():
+    q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
+    url = build_ebay_sealed_url(q)
+    assert 'LH_Sold=1' in url
+    assert 'Booster+Box' in url or 'Booster Box' in url.replace('%20', ' ').replace('+', ' ')
+    assert 'sealed' in url.lower()
+    assert '-pack' in url.lower() or '-pack' in url
+
+def test_build_ebay_sealed_url_booster_pack_no_pack_exclusion():
+    q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_pack')
+    url = build_ebay_sealed_url(q)
+    # Should NOT exclude -pack when searching for packs
+    decoded = url.replace('%20', ' ').replace('+', ' ')
+    assert '-pack' not in decoded
+
+def test_build_ebay_sealed_url_etb():
+    q = SealedProductQuery(name='Prismatic Evolutions', set_name='Prismatic Evolutions', product_type='etb')
+    url = build_ebay_sealed_url(q)
+    decoded = url.replace('%20', ' ').replace('+', ' ')
+    assert 'Elite Trainer Box' in decoded
+
+def test_is_relevant_sealed_title_filters_opened():
+    q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
+    assert not is_relevant_sealed_title('Pokemon 151 Booster Box OPENED empty', q)
+
+def test_is_relevant_sealed_title_filters_lot():
+    q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
+    assert not is_relevant_sealed_title('Pokemon 151 Booster Box x3 lot', q)
+
+def test_is_relevant_sealed_title_accepts_good_listing():
+    q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
+    assert is_relevant_sealed_title('Pokemon Scarlet & Violet 151 Booster Box Factory Sealed', q)

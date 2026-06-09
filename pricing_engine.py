@@ -55,6 +55,23 @@ class CardQuery:
             assert self.condition, "raw queries need condition"
 
 
+PRODUCT_TYPE_SEARCH_TERMS: dict[str, str] = {
+    "booster_pack": "Booster Pack",
+    "booster_box":  "Booster Box",
+    "etb":          "Elite Trainer Box",
+    "tin":          "Tin",
+    "bundle":       "Bundle",
+}
+
+
+@dataclass
+class SealedProductQuery:
+    name: str
+    set_name: str
+    product_type: str   # one of PRODUCT_TYPE_SEARCH_TERMS keys
+    language: str = "english"
+
+
 @dataclass
 class SaleRecord:
     price_usd: float
@@ -121,6 +138,51 @@ def build_ebay_sold_url(query: CardQuery) -> str:
         "_sop": "13",
     }
     return f"https://www.ebay.com/sch/i.html?{urlencode(params)}"
+
+
+def build_ebay_sealed_url(query: SealedProductQuery) -> str:
+    """Build eBay sold-listings URL for a sealed Pokemon product.
+
+    Uses set_name as the primary search term. Excludes opened/resealed
+    listings. For non-pack types also excludes loose individual packs.
+    """
+    product_term = PRODUCT_TYPE_SEARCH_TERMS.get(query.product_type, "")
+    parts: list[str] = []
+    if query.set_name:
+        parts.append(query.set_name)
+    elif query.name:
+        parts.append(query.name)
+    if product_term:
+        parts.append(product_term)
+    parts.append("sealed")
+    parts += ["-opened", "-resealed", "-empty"]
+    if query.product_type != "booster_pack":
+        parts.append("-pack")   # avoid individual packs when searching for boxes/ETBs/tins
+    if query.language.lower() == "japanese":
+        parts.append("Japanese")
+    keywords = " ".join(parts)
+    params = {
+        "_nkw": keywords,
+        "LH_Sold": "1",
+        "LH_Complete": "1",
+        "_ipg": "240",
+        "_sop": "13",
+    }
+    return f"https://www.ebay.com/sch/i.html?{urlencode(params)}"
+
+
+def is_relevant_sealed_title(title: str, query: SealedProductQuery) -> bool:
+    """Return True if this eBay listing title looks like a genuine sealed-product sale."""
+    t = title.lower()
+    if any(j in t for j in ("opened", "resealed", "empty box", "factory seconds")):
+        return False
+    if re.search(r"\b(lot of|x[2-9]|[2-9]x|\d+ packs)\b", t):
+        return False
+    search_text = query.set_name or query.name
+    tokens = [w.lower() for w in re.findall(r"\w+", search_text) if len(w) > 2]
+    if tokens and not any(tok in t for tok in tokens):
+        return False
+    return True
 
 
 class Fetcher(ABC):
