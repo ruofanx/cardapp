@@ -110,7 +110,26 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
           const bn   = baseNameOf(c);
           const lk   = `${lang}|${bn}`;
           if (sameLangMap.has(lk)) { c.image_url = sameLangMap.get(lk); }
-          // No cross-language fallback: JP/CH without own art stays image-less.
+        }
+        // Cross-language fallback (last resort): for JP/CH cards that still
+        // have no image, borrow from EN. This covers vintage cards where
+        // TCGdex JA has no scan but the Pokémon illustration is identical.
+        // Modern SV JP cards come from TCGdex JA with their own art, so they
+        // already have images and skip this loop entirely.
+        const anyLangMap = new Map();
+        for (const c of widened) {
+          if (!c.image_url) continue;
+          const bn = baseNameOf(c);
+          const prev = anyLangMap.get(bn);
+          // Prefer assets.tcgdex.net — normalizeCard won't strip it for JP/CH.
+          // images.pokemontcg.io is EN-only and gets stripped by normalizeCard.
+          const isBetter = !prev || (c.image_url.includes('assets.tcgdex.net') && !prev.includes('assets.tcgdex.net'));
+          if (isBetter) anyLangMap.set(bn, c.image_url);
+        }
+        for (const c of widened) {
+          if (c.image_url) continue;
+          const bn = baseNameOf(c);
+          if (anyLangMap.has(bn)) c.image_url = anyLangMap.get(bn);
         }
 
         // Set-aware JP sort: when the query names a JP set, float JP results

@@ -235,7 +235,7 @@ function App() {
     updateCard,
     refreshPrice,
     identifyCard,
-    reloadCollection: () => reloadCollection(currentUser?.id),
+    reloadCollection: (uid) => reloadCollection(uid ?? currentUser?.id),
     users, currentUser, setCurrentUser,
     backend,
     params: top.params,
@@ -260,7 +260,13 @@ function App() {
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
       {backend.online === false && <BackendBanner backend={backend} onRetry={() => reloadCollection(currentUser?.id)}/>}
       <Screen {...screenProps} key={top.screen}/>
-      {!hideTabBar && <BottomTabBar tab={tab} navigate={navigate}/>}
+      {!hideTabBar && (
+        <BottomTabBar
+          tab={tab} navigate={navigate}
+          users={users} currentUser={currentUser} setCurrentUser={setCurrentUser}
+          reloadCollection={reloadCollection}
+        />
+      )}
       <TweaksHook t={t} setTweak={setTweak}/>
     </div>
   );
@@ -288,54 +294,114 @@ function BackendBanner({ backend, onRetry }) {
   );
 }
 
-function BottomTabBar({ tab, navigate }) {
+function BottomTabBar({ tab, navigate, users = [], currentUser, setCurrentUser, reloadCollection }) {
+  const [showSwitcher, setShowSwitcher] = useStateApp(false);
   const items = [
     { id: 'home',     label: 'Home',    icon: 'home' },
     { id: 'browse',   label: 'Binder',  icon: 'browse' },
     { id: 'scan',     label: 'Scan',    icon: 'scan', primary: true },
     { id: 'trade',    label: 'Trade',   icon: 'trade' },
-    { id: 'settings', label: 'You',     icon: 'profile' },
+    { id: 'settings', label: currentUser?.name || 'You', icon: 'profile' },
   ];
+
+  const switchTo = (u) => {
+    setShowSwitcher(false);
+    if (!u || u.id === currentUser?.id) return;
+    if (setCurrentUser) setCurrentUser(u);
+    if (window.api) window.api.state.currentUserId = u.id;
+    if (reloadCollection) reloadCollection(u.id);
+  };
+
   return (
-    <div style={{
-      flexShrink: 0,
-      padding: '6px 6px calc(env(safe-area-inset-bottom, 0px) + 6px)',
-      background: 'oklch(0.16 0.01 250 / 0.78)',
-      backdropFilter: 'blur(20px) saturate(140%)',
-      borderTop: '1px solid var(--hairline-soft)',
-      display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
-    }}>
-      {items.map(it => {
-        const active = tab === it.id;
-        if (it.primary) {
-          return (
-            <button key={it.id} className="tap" onClick={() => navigate(it.id)} style={{
-              display: 'grid', placeItems: 'center', padding: '4px 0',
-            }}>
-              <div style={{
-                width: 44, height: 44, borderRadius: 22,
-                background: 'var(--accent)', color: 'var(--accent-ink)',
-                display: 'grid', placeItems: 'center',
-                boxShadow: '0 4px 14px var(--accent-glow)',
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      {showSwitcher && users.length > 1 && (
+        <AccountSwitcherSheet users={users} currentUser={currentUser} onSelect={switchTo} onClose={() => setShowSwitcher(false)}/>
+      )}
+      <div style={{
+        padding: '6px 6px calc(env(safe-area-inset-bottom, 0px) + 6px)',
+        background: 'oklch(0.16 0.01 250 / 0.78)',
+        backdropFilter: 'blur(20px) saturate(140%)',
+        borderTop: '1px solid var(--hairline-soft)',
+        display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)',
+      }}>
+        {items.map(it => {
+          const active = tab === it.id;
+          if (it.primary) {
+            return (
+              <button key={it.id} className="tap" onClick={() => navigate(it.id)} style={{
+                display: 'grid', placeItems: 'center', padding: '4px 0',
               }}>
-                <Icon name={it.icon} size={20}/>
-              </div>
+                <div style={{
+                  width: 44, height: 44, borderRadius: 22,
+                  background: 'var(--accent)', color: 'var(--accent-ink)',
+                  display: 'grid', placeItems: 'center',
+                  boxShadow: '0 4px 14px var(--accent-glow)',
+                }}>
+                  <Icon name={it.icon} size={20}/>
+                </div>
+              </button>
+            );
+          }
+          const isProfile = it.id === 'settings';
+          return (
+            <button
+              key={it.id}
+              className="tap"
+              onClick={() => navigate(it.id)}
+              onDoubleClick={isProfile ? () => { if (users.length > 1) setShowSwitcher(s => !s); } : undefined}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+                padding: '8px 0 4px',
+                color: active ? 'var(--ink)' : 'var(--ink-3)',
+                background: 'transparent',
+              }}>
+              <Icon name={it.icon} size={20} stroke={active ? 2 : 1.6}/>
+              <span style={{ fontSize: 10, fontWeight: active ? 600 : 500, maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
             </button>
           );
-        }
-        return (
-          <button key={it.id} className="tap" onClick={() => navigate(it.id)} style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-            padding: '8px 0 4px',
-            color: active ? 'var(--ink)' : 'var(--ink-3)',
-            background: 'transparent',
-          }}>
-            <Icon name={it.icon} size={20} stroke={active ? 2 : 1.6}/>
-            <span style={{ fontSize: 10, fontWeight: active ? 600 : 500 }}>{it.label}</span>
-          </button>
-        );
-      })}
+        })}
+      </div>
     </div>
+  );
+}
+
+// Quick account switcher — pops up above the profile tab on double-click,
+// letting you jump straight to another family member without opening Settings.
+function AccountSwitcherSheet({ users, currentUser, onSelect, onClose }) {
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60 }}/>
+      <div className="col" style={{
+        position: 'absolute', right: 8, bottom: '100%', marginBottom: 8, zIndex: 61,
+        minWidth: 168,
+        background: 'var(--bg-2)', border: '1px solid var(--hairline-soft)',
+        borderRadius: 14, boxShadow: 'var(--shadow-pop)', overflow: 'hidden',
+      }}>
+        <div style={{ padding: '10px 14px 6px', fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>
+          Switch account
+        </div>
+        {users.map(u => {
+          const active = u.id === currentUser?.id;
+          return (
+            <button key={u.id} className="tap row gap-2" onClick={() => onSelect(u)} style={{
+              padding: '10px 14px', width: '100%',
+              background: active ? 'var(--accent-soft)' : 'transparent',
+              borderTop: '1px solid var(--hairline-soft)',
+            }}>
+              <span style={{
+                width: 26, height: 26, borderRadius: 13, flexShrink: 0,
+                display: 'grid', placeItems: 'center',
+                background: active ? 'var(--accent)' : 'var(--bg-3)',
+                color: active ? 'var(--accent-ink)' : 'var(--ink-2)',
+                fontSize: 12, fontWeight: 700,
+              }}>{(u.name || '?').trim().charAt(0).toUpperCase()}</span>
+              <span style={{ flex: 1, textAlign: 'left', fontSize: 14, fontWeight: active ? 600 : 500, color: active ? 'var(--ink)' : 'var(--ink-2)' }}>{u.name}</span>
+              {active && <Icon name="check" size={16} style={{ color: 'var(--accent)' }}/>}
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

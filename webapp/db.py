@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS price_history (
     card_id     INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
     recorded_at TEXT    NOT NULL DEFAULT (datetime('now')),
     price_usd   REAL    NOT NULL,
-    source      TEXT
+    source      TEXT,
+    source_url  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_price_history_card_time
@@ -159,6 +160,10 @@ def init_db():
         # predate this column. SQLite raises if it already exists.
         try:
             conn.execute("ALTER TABLE cards ADD COLUMN image_url TEXT")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE price_history ADD COLUMN source_url TEXT")
         except sqlite3.OperationalError:
             pass
         for name, color in SEED_USERS:
@@ -337,23 +342,26 @@ def log_price(card_id: int, price_usd: float, source: Optional[str] = None,
 
 def get_price_history(card_id: int, *, since: Optional[str] = None,
                       limit: Optional[int] = None) -> list[dict]:
-    """Return [{at, price}] for a card, oldest first. Optionally filter
-    by ISO timestamp `since` and cap rows with `limit` (newest kept)."""
+    """Return [{at, price, source, source_url}] for a card, oldest first.
+    Optionally filter by ISO timestamp `since` and cap rows with `limit`
+    (newest kept)."""
     with connect() as conn:
         if since:
             rows = conn.execute(
-                "SELECT recorded_at, price_usd FROM price_history "
+                "SELECT recorded_at, price_usd, source, source_url FROM price_history "
                 "WHERE card_id = ? AND recorded_at >= ? "
                 "ORDER BY recorded_at ASC",
                 (card_id, since),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT recorded_at, price_usd FROM price_history "
+                "SELECT recorded_at, price_usd, source, source_url FROM price_history "
                 "WHERE card_id = ? ORDER BY recorded_at ASC",
                 (card_id,),
             ).fetchall()
-        out = [{"at": r["recorded_at"], "price": float(r["price_usd"])} for r in rows]
+        out = [{"at": r["recorded_at"], "price": float(r["price_usd"]),
+                "source": r["source"], "source_url": r["source_url"]}
+               for r in rows]
         if limit and len(out) > limit:
             out = out[-limit:]
         return out

@@ -72,6 +72,15 @@ _PRICE_ROW_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Every PriceCharting product page embeds its price-history graph data inline:
+#   VGPC.chart_data = {"used": [[<ms timestamp>, <price in cents>], ...], "graded": [...], ...}
+# "used" is PriceCharting's loose/ungraded series — it lines up with the
+# "Ungraded" row `lookup_raw_price` reads from the price table (verified:
+# Venusaur ex 198/165 chart's latest "used" point ($120.24) ≈ live
+# "Ungraded" price ($120.23)). Spans ~3 years at roughly monthly granularity,
+# far more history than this app has collected on its own (~3 weeks).
+_CHART_DATA_RE = re.compile(r'VGPC\.chart_data\s*=\s*(\{.*?\});', re.DOTALL)
+
 
 @dataclass
 class PriceChartingResult:
@@ -275,6 +284,51 @@ async def lookup_raw_price(name: str, set_name: str, card_number: str,
         price_usd=table.get("Ungraded"),
         all_prices=table, cached=False,
     )
+
+
+async def fetch_chart_history(name: str, set_name: str, card_number: str,
+                               language: str = "english",
+                               variant: Optional[str] = None,
+                               series: str = "used") -> Optional[tuple[list[tuple[int, float]], str]]:
+    """Scrape PriceCharting's embedded `VGPC.chart_data` for this card.
+
+    Returns `([(timestamp_ms, price_usd), ...] sorted ascending, url)`, or
+    None. `series` selects which PriceCharting line to read — "used" is the
+    raw/ungraded line (see `_CHART_DATA_RE` for the verified mapping).
+
+    Bypasses the price-table cache: this hits the same product page but reads
+    a different embedded payload, and the result (a multi-year series) is
+    meant to be persisted into `price_history` rather than cached here.
+    """
+    urls = _candidate_urls(name, set_name, card_number, language, variant=variant)
+    if not urls:
+        return None
+    async with httpx.AsyncClient(timeout=15.0,
+                                  headers={"User-Agent": USER_AGENT}) as client:
+        for url in urls:
+            try:
+                r = await client.get(url, follow_redirects=True)
+            except httpx.HTTPError as e:
+                log.warning("PriceCharting chart fetch failed %s: %s", url, e)
+                continue
+            if r.status_code != 200:
+                continue
+            final_path = str(r.url.path)
+            if final_path.startswith("/search-products") or final_path == "/":
+                continue
+            m = _CHART_DATA_RE.search(r.text)
+            if not m:
+                continue
+            try:
+                data = json.loads(m.group(1))
+            except (json.JSONDecodeError, ValueError):
+                continue
+            points = data.get(series) or []
+            cleaned = sorted((int(t), v / 100.0) for t, v in points if v)
+            if not cleaned:
+                continue
+            return cleaned, url
+    return None
 
 
 async def _fetch_prices_with_cache(urls: list[str]) -> Optional[tuple[dict, str]]:

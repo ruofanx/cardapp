@@ -33,7 +33,7 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
                 <button key={u.id} className="tap" onClick={() => {
                   if (setCurrentUser) setCurrentUser(u);
                   if (window.api) window.api.state.currentUserId = u.id;
-                  if (reloadCollection) reloadCollection();
+                  if (reloadCollection) reloadCollection(u.id);
                 }} style={{
                   padding: '6px 12px', borderRadius: 999,
                   background: u.id === currentUser?.id ? 'var(--ink)' : 'var(--bg-2)',

@@ -233,7 +233,8 @@ async def median_relevant_price(
     if language.lower() == "japanese":
         parts.append("Japanese")
     if grade_company and grade is not None:
-        parts.append(f"{grade_company} {grade}")
+        grade_str = str(int(grade)) if grade == int(grade) else str(grade)
+        parts.append(f"{grade_company} {grade_str}")
     query = " ".join(p for p in parts if p)
 
     # Over-fetch so the filter step has room to drop irrelevant titles

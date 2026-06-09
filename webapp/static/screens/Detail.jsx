@@ -125,6 +125,15 @@ function fmtAgo(iso) {
   return t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+// price_history.source values → friendly labels for the Sold Listings
+// fallback rows. Anything unrecognized (incl. null, the live daily-snapshot
+// rows written by refresh_job) reads as "price snapshot".
+function priceSourceLabel(source) {
+  if (source === 'pricecharting_chart_backfill') return 'PriceCharting history';
+  if (source === 'backfill') return 'price snapshot';
+  return 'price snapshot';
+}
+
 function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPrice, updateCard, collection, params = {} }) {
   const cur = tweaks.currency;
   const [tab, setTab] = useStateDetail('overview');
@@ -312,13 +321,32 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   };
   const handlePhotoSelected = async (e) => {
     const files = Array.from(e.target.files || []);
-    e.target.value = ''; // allow re-uploading the same file
+    e.target.value = '';
     if (!files.length || !c.id) return;
     setUploadingPhoto(true);
     try {
       for (const f of files) {
-        try { await window.userPhotos.add(c.id, f); }
-        catch (err) { console.warn('photo add failed:', err.message); }
+        // Upload to server — handles HEIC and any format without browser decode.
+        // Falls back to localStorage resize if server upload fails.
+        let serverOk = false;
+        try {
+          const fd = new FormData();
+          fd.append('photo', f);
+          const res = await fetch(`${window.api?.state?.base || 'http://localhost:8000'}/api/cards/${c.id}/photo`, {
+            method: 'POST', body: fd,
+          });
+          if (res.ok) {
+            serverOk = true;
+            const data = await res.json().catch(() => null);
+            if (updateCard && data?.photo_path) {
+              await updateCard(c.id, { photo_path: data.photo_path });
+            }
+          }
+        } catch (err) { console.warn('server photo upload failed:', err.message); }
+        if (!serverOk) {
+          try { await window.userPhotos.add(c.id, f); }
+          catch (err) { console.warn('photo add failed:', err.message); }
+        }
       }
     } finally {
       setUploadingPhoto(false);
@@ -647,7 +675,34 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
             {/* Card art — show current image + a reset for cards where the
                 Pokemon TCG API attached the wrong art (Movie 2 promos like
                 Ancient Mew, regional exclusives, etc. that have no exact
-                match in the catalog). */}
+                match in the catalog). Also shows a URL input for cards with
+                no image (e.g. vintage JP cards not in TCGdex). */}
+            {!c.image_url && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Card art URL
+                </div>
+                <div className="row gap-2" style={{ alignItems: 'center' }}>
+                  <input
+                    type="url"
+                    placeholder="Paste image URL…"
+                    style={{
+                      flex: 1, background: 'var(--bg-2)', color: 'var(--ink)',
+                      border: '1px solid var(--hairline-soft)', borderRadius: 10,
+                      padding: '8px 12px', fontSize: 13,
+                    }}
+                    onKeyDown={async (ev) => {
+                      if (ev.key !== 'Enter') return;
+                      const url = ev.target.value.trim();
+                      if (!url || !updateCard) return;
+                      try { await updateCard(c.id, { image_url: url }); ev.target.value = ''; }
+                      catch (_) {}
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: 'var(--ink-4)', whiteSpace: 'nowrap' }}>Enter ↵</span>
+                </div>
+              </div>
+            )}
             {c.image_url && (
               <div style={{ marginBottom: 18 }}>
                 <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
@@ -962,7 +1017,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
         </div>
 
         {tab === 'overview' && <OverviewTab card={c} cur={cur} points={historyPoints} view={{ lang, condition, grading, grader, grade }} refreshing={refreshing} onRefresh={handleRefresh}/>}
-        {tab === 'sales' && <SalesTab cur={cur} card={c} view={{ lang, condition, grading, grader, grade }}/>}
+        {tab === 'sales' && <SalesTab cur={cur} card={c} points={historyPoints} view={{ lang, condition, grading, grader, grade }}/>}
         {tab === 'sets' && <VariantsTab card={c} cur={cur} tweaks={tweaks} navigate={navigate}/>}
       </div>
 
@@ -1017,31 +1072,30 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   );
 }
 
-// Scatter chart: each dot = one eBay sold listing, line = rolling average.
-function SoldPriceChart({ sales, range, w = 358, h = 160 }) {
-  const filtered = React.useMemo(() => {
-    if (!Array.isArray(sales) || sales.length === 0) return [];
-    const now = Date.now();
-    const days = range === '1W' ? 7 : range === '1M' ? 30 : range === '3M' ? 90 : range === '1Y' ? 365 : null;
-    const cutoff = days ? now - days * 86400000 : 0;
-    return sales
-      .filter(s => s.price_usd != null && s.sold_date)
-      .map(s => ({ t: new Date(s.sold_date).getTime(), p: Number(s.price_usd) }))
-      .filter(s => !isNaN(s.t) && s.t >= cutoff && s.p > 0)
-      .sort((a, b) => a.t - b.t);
-  }, [sales, range]);
+// Dot + rolling-average trend chart. `points` must already be filtered to the
+// selected range and sorted ascending by time: [{ t: <ms>, p: <price> }, ...]
+// Dots = individual data points (eBay sold prices, or daily price snapshots
+// when sold data is unavailable); line = centered rolling average.
+function fmtChartDate(t) {
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
 
-  if (filtered.length === 0) return null;
+function PricePointChart({ points, w = 358, h = 160 }) {
+  // Hovered (desktop) or tapped (touch) dot index — shows a date+price tooltip.
+  const [activeIdx, setActiveIdx] = React.useState(null);
+  React.useEffect(() => { setActiveIdx(null); }, [points]);
 
-  const pad = { top: 14, right: 8, bottom: 10, left: 8 };
+  if (!Array.isArray(points) || points.length === 0) return null;
+
+  const pad = { top: 14, right: 8, bottom: 22, left: 8 };
   const cw = w - pad.left - pad.right;
   const ch = h - pad.top - pad.bottom;
 
-  const prices = filtered.map(d => d.p);
+  const prices = points.map(d => d.p);
   const minP = Math.min(...prices);
   const maxP = Math.max(...prices);
-  const minT = filtered[0].t;
-  const maxT = filtered[filtered.length - 1].t;
+  const minT = points[0].t;
+  const maxT = points[points.length - 1].t;
   // 5% vertical padding so dots aren't clipped at edges
   const rawSpan = maxP - minP;
   const spanP = (rawSpan > 0 ? rawSpan : maxP * 0.2 || 1) * 1.1;
@@ -1052,18 +1106,35 @@ function SoldPriceChart({ sales, range, w = 358, h = 160 }) {
   const toY = p => pad.top + (1 - (p - baseP) / spanP) * ch;
 
   // Centered rolling average
-  const WIN = Math.min(7, Math.max(3, Math.ceil(filtered.length / 4)));
-  const rolling = filtered.map((_, i) => {
+  const WIN = Math.min(7, Math.max(3, Math.ceil(points.length / 4)));
+  const rolling = points.map((_, i) => {
     const half = Math.floor(WIN / 2);
-    const s = Math.max(0, Math.min(i - half, filtered.length - WIN));
-    const e = Math.min(filtered.length, s + WIN);
-    const slice = filtered.slice(s, e);
+    const s = Math.max(0, Math.min(i - half, points.length - WIN));
+    const e = Math.min(points.length, s + WIN);
+    const slice = points.slice(s, e);
     return slice.reduce((acc, x) => acc + x.p, 0) / slice.length;
   });
 
-  const linePath = filtered.map((pt, i) =>
+  const linePath = points.map((pt, i) =>
     `${i === 0 ? 'M' : 'L'} ${toX(pt.t).toFixed(1)} ${toY(rolling[i]).toFixed(1)}`
   ).join(' ');
+
+  // X-axis date labels: first, last, and up to 2 evenly-spaced points between.
+  const TICKS = Math.min(4, points.length);
+  const tickIdxs = [...new Set(
+    Array.from({ length: TICKS }, (_, i) =>
+      Math.round(i * (points.length - 1) / Math.max(1, TICKS - 1)))
+  )];
+
+  const active = activeIdx != null ? points[activeIdx] : null;
+  const activeX = active ? toX(active.t) : 0;
+  const activeY = active ? toY(active.p) : 0;
+  const tooltipText = active ? `${fmtChartDate(active.t)} · ${fmtUSD(active.p, { decimals: 2 })}` : '';
+  // Flip the tooltip to the dot's left when it'd overflow the right edge.
+  const tooltipW = 8 + tooltipText.length * 5.6;
+  const tooltipOnRight = activeX + 10 + tooltipW <= w;
+  const tooltipX = tooltipOnRight ? activeX + 10 : activeX - 10 - tooltipW;
+  const tooltipY = Math.max(2, activeY - 12);
 
   return (
     <svg width={w} height={h} className="spark" style={{ display: 'block', overflow: 'visible' }}>
@@ -1076,18 +1147,55 @@ function SoldPriceChart({ sales, range, w = 358, h = 160 }) {
         />
       ))}
       {/* Rolling average trendline */}
-      {filtered.length >= 2 && (
+      {points.length >= 2 && (
         <path d={linePath} fill="none" stroke="var(--accent)"
           strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
       )}
-      {/* Sold price dots */}
-      {filtered.map((pt, i) => (
-        <circle key={i}
-          cx={toX(pt.t).toFixed(1)} cy={toY(pt.p).toFixed(1)}
-          r={3.5} fill="var(--accent)" fillOpacity={0.5}
-          stroke="var(--accent)" strokeWidth={1} strokeOpacity={0.85}
-        />
+      {/* X-axis date labels */}
+      {tickIdxs.map(i => {
+        const x = toX(points[i].t);
+        const anchor = i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle';
+        return (
+          <text key={`tick-${i}`} x={x.toFixed(1)} y={h - 6}
+            textAnchor={anchor} className="mono"
+            style={{ fontSize: 9.5, fill: 'var(--ink-4)' }}>
+            {fmtChartDate(points[i].t)}
+          </text>
+        );
+      })}
+      {/* Price dots — hover (desktop) or tap (touch) to see date + price */}
+      {points.map((pt, i) => (
+        <g key={i}
+          onMouseEnter={() => setActiveIdx(i)}
+          onMouseLeave={() => setActiveIdx(cur => (cur === i ? null : cur))}
+          onClick={() => setActiveIdx(cur => (cur === i ? null : i))}
+          style={{ cursor: 'pointer' }}>
+          {/* Invisible larger hit-area — easier to target on touch */}
+          <circle cx={toX(pt.t).toFixed(1)} cy={toY(pt.p).toFixed(1)} r={9} fill="transparent"/>
+          <circle
+            cx={toX(pt.t).toFixed(1)} cy={toY(pt.p).toFixed(1)}
+            r={activeIdx === i ? 5 : 3.5}
+            fill="var(--accent)" fillOpacity={activeIdx === i ? 0.95 : 0.5}
+            stroke="var(--accent)" strokeWidth={1} strokeOpacity={0.85}
+          />
+        </g>
       ))}
+      {/* Tooltip for the active dot */}
+      {active && (
+        <g pointerEvents="none">
+          <line x1={activeX.toFixed(1)} y1={(pad.top).toFixed(1)}
+            x2={activeX.toFixed(1)} y2={(pad.top + ch).toFixed(1)}
+            stroke="var(--accent)" strokeWidth={1} strokeOpacity={0.3} strokeDasharray="3 3"/>
+          <rect x={tooltipX.toFixed(1)} y={tooltipY.toFixed(1)}
+            width={tooltipW.toFixed(1)} height={20} rx={6}
+            fill="var(--bg-2)" stroke="var(--hairline-soft)" strokeWidth={1}/>
+          <text x={(tooltipX + tooltipW / 2).toFixed(1)} y={(tooltipY + 14).toFixed(1)}
+            textAnchor="middle" className="mono"
+            style={{ fontSize: 11, fontWeight: 600, fill: 'var(--ink)' }}>
+            {tooltipText}
+          </text>
+        </g>
+      )}
     </svg>
   );
 }
@@ -1133,27 +1241,29 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
         const raw = new Date(s.sold_date).getTime();
         return { t: isNaN(raw) ? now : raw, p: Number(s.price_usd) };
       })
-      .filter(s => s.t >= cutoff);
+      .filter(s => s.t >= cutoff)
+      .sort((a, b) => a.t - b.t);
   }, [soldListings, range]);
 
-  // Fallback: slice historyPoints by range when sold listings are unavailable
-  const historySeries = React.useMemo(() => {
-    if (!Array.isArray(points) || points.length === 0) return null;
+  // Fallback: daily price-history snapshots, plotted the same way (dots +
+  // rolling-average trend line) when eBay sold-listing data is unavailable.
+  const snapshotPts = React.useMemo(() => {
+    if (!Array.isArray(points) || points.length === 0) return [];
     const now = Date.now();
     const days = range === '1W' ? 7 : range === '1M' ? 30 : range === '3M' ? 90 : range === '1Y' ? 365 : null;
     const cutoff = days ? now - days * 86400000 : 0;
-    const filtered = days ? points.filter(p => new Date(p.at).getTime() >= cutoff) : points;
-    const used = filtered.length ? filtered : points.slice(-1);
-    const nums = used.map(p => p.price);
-    return nums.length === 1 ? [nums[0], nums[0]] : nums;
+    return points
+      .filter(pt => pt.price != null && Number(pt.price) > 0)
+      .map(pt => ({ t: new Date(pt.at).getTime(), p: Number(pt.price) }))
+      .filter(pt => !isNaN(pt.t) && pt.t >= cutoff)
+      .sort((a, b) => a.t - b.t);
   }, [points, range]);
 
   const hasSoldData = chartPts.length > 0;
-  const hasHistory = Array.isArray(historySeries) && historySeries.length >= 2;
-  const hasSeries = hasSoldData || hasHistory;
-  const chartPrices = hasSoldData ? chartPts.map(p => p.p) : (historySeries || []);
-  const min = hasSeries ? Math.min(...chartPrices) : null;
-  const max = hasSeries ? Math.max(...chartPrices) : null;
+  const activePts = hasSoldData ? chartPts : snapshotPts;
+  const hasSeries = activePts.length > 0;
+  const min = hasSeries ? Math.min(...activePts.map(p => p.p)) : null;
+  const max = hasSeries ? Math.max(...activePts.map(p => p.p)) : null;
   // Real price-quote metadata. _quote is attached by api.refreshPrice when
   // the user refreshes during this session. price_source / source might be
   // stored on the backend row — check both shapes defensively.
@@ -1164,9 +1274,10 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
 
   return (
     <div style={{ padding: '20px 16px 0' }}>
-      {/* Chart — dots = sold listings + rolling avg line; falls back to price snapshot */}
+      {/* Chart — dots = data points (eBay sold prices, or daily snapshots when
+          sold data is unavailable), line = rolling-average trend */}
       <div style={{ position: 'relative', height: 160, marginBottom: 6 }}>
-        {soldListings === null && !hasHistory ? (
+        {soldListings === null && snapshotPts.length === 0 ? (
           <div style={{
             position: 'absolute', inset: 0,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1174,28 +1285,20 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
           }}>
             <div style={{ fontSize: 12, color: 'var(--ink-4)' }}>Loading…</div>
           </div>
-        ) : hasSoldData ? (
+        ) : hasSeries ? (
           <>
-            <SoldPriceChart sales={soldListings} range={range} w={358} h={160}/>
+            <PricePointChart points={activePts} w={358} h={160}/>
             <div className="mono" style={{ position: 'absolute', top: 4, right: 6, fontSize: 11, color: 'var(--ink-3)' }}>
               high {fmtUSD(max, { decimals: 0 })}
             </div>
             <div className="mono" style={{ position: 'absolute', bottom: 4, right: 6, fontSize: 11, color: 'var(--ink-3)' }}>
               low {fmtUSD(min, { decimals: 0 })}
             </div>
-          </>
-        ) : hasHistory ? (
-          <>
-            <Sparkline data={historySeries} w={358} h={160} stroke={1.6} fill={true} color="var(--accent)"/>
-            <div className="mono" style={{ position: 'absolute', top: 4, right: 6, fontSize: 11, color: 'var(--ink-3)' }}>
-              high {fmtUSD(max, { decimals: 0 })}
-            </div>
-            <div className="mono" style={{ position: 'absolute', bottom: 4, right: 6, fontSize: 11, color: 'var(--ink-3)' }}>
-              low {fmtUSD(min, { decimals: 0 })}
-            </div>
-            <div className="mono" style={{ position: 'absolute', bottom: 4, left: 6, fontSize: 10, color: 'var(--ink-4)' }}>
-              price snapshots
-            </div>
+            {!hasSoldData && (
+              <div className="mono" style={{ position: 'absolute', bottom: 4, left: 6, fontSize: 10, color: 'var(--ink-4)' }}>
+                price snapshots
+              </div>
+            )}
           </>
         ) : (
           <div style={{
@@ -1286,7 +1389,7 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
   );
 }
 
-function SalesTab({ cur, card, view }) {
+function SalesTab({ cur, card, points, view }) {
   const links = buildSourceLinks({ card, ...view });
   const isGraded = view?.grading === 'graded';
   // null = loading, [] = no relevant sales found, {sales,...} = fetched
@@ -1332,19 +1435,49 @@ function SalesTab({ cur, card, view }) {
   const sales = data?.sales || [];
   const isLoading = data === null && !error;
 
+  // eBay sold-listing data is essentially unobtainable for this app (403
+  // anti-bot, deprecated/ungranted APIs — see CLAUDE.md). When `sales` comes
+  // back empty, fall back to the same `price_history` snapshots the Overview
+  // chart plots — most-recent-first — so this tab still shows real comps
+  // instead of a dead end.
+  const snapshotRows = React.useMemo(() => {
+    if (!Array.isArray(points) || points.length === 0) return [];
+    return points
+      .filter(pt => pt.price != null && Number(pt.price) > 0)
+      .slice()
+      .sort((a, b) => new Date(b.at) - new Date(a.at))
+      .slice(0, 12)
+      .map(pt => ({
+        price_usd: Number(pt.price),
+        sold_date: pt.at,
+        source: priceSourceLabel(pt.source),
+        url: pt.source_url || null,
+        title: card?.name ? `${card.name} · ${view?.condition || 'snapshot'}` : 'Price snapshot',
+      }));
+  }, [points, card?.name, view?.condition]);
+
+  const usingSnapshots = !isLoading && sales.length === 0 && snapshotRows.length > 0;
+  const rows = usingSnapshots ? snapshotRows : sales;
+
   return (
     <div style={{ padding: '16px 16px 0' }}>
       {/* Section header with optional summary stats */}
       <div className="row" style={{ marginBottom: 8, alignItems: 'baseline', justifyContent: 'space-between' }}>
         <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-          Recent sold listings{data?.period_days ? ` · ${data.period_days}d` : ''}
+          {usingSnapshots ? 'Recent price snapshots' : `Recent sold listings${data?.period_days ? ` · ${data.period_days}d` : ''}`}
         </div>
-        {data?.median_usd != null && (
+        {data?.median_usd != null && !usingSnapshots && (
           <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
             median {fmtUSD(data.median_usd, { decimals: 0 })} · n={data.sample_size}
           </div>
         )}
       </div>
+
+      {usingSnapshots && (
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 8 }}>
+          eBay sold listings aren't available for this card — showing recent price snapshots instead.
+        </div>
+      )}
 
       {/* Listings table */}
       <div className="col" style={{ background: 'var(--bg-1)', borderRadius: 14, border: '1px solid var(--hairline-soft)', overflow: 'hidden' }}>
@@ -1353,14 +1486,14 @@ function SalesTab({ cur, card, view }) {
             Fetching eBay sold listings…
           </div>
         )}
-        {!isLoading && sales.length === 0 && (
+        {!isLoading && rows.length === 0 && (
           <div style={{ padding: '20px 14px', fontSize: 13, color: 'var(--ink-3)', textAlign: 'center' }}>
             {data?.note || (isGraded
               ? `No recent ${view?.grader} ${view?.grade} sales found on eBay.`
               : 'No recent sales found on eBay for this card.')}
           </div>
         )}
-        {sales.map((s, i) => (
+        {rows.map((s, i) => (
           s.url ? (
             <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" style={{
               display: 'flex', alignItems: 'center', gap: 10,

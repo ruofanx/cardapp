@@ -683,8 +683,38 @@ async def refresh_price(req: RefreshPriceRequest):
                          f"sub-10 grades."),
                 "pricecharting_url": pc.url,
             }
-        # PC didn't have it — fall through to multiplier estimate so the
-        # user always gets a number.
+        # PC didn't have it. For JP graded cards try eBay Browse API with
+        # grade qualifier in the query (e.g. "PSA 10 Umbreon ex 217 Japanese")
+        # so we get graded-specific active listing prices directly.
+        if req.language.lower() == "japanese":
+            try:
+                import ebay_browse_api
+                br_g = await ebay_browse_api.median_relevant_price(
+                    req.name, req.set_name, req.card_number,
+                    language="japanese",
+                    grade_company=req.grade_company,
+                    grade=req.grade,
+                )
+            except Exception as e:
+                log.warning("eBay Browse graded median lookup failed: %s", e)
+                br_g = None
+            if br_g and br_g["median_usd"]:
+                g_label = f"{req.grade_company} {int(req.grade) if req.grade == int(req.grade) else req.grade}"
+                return {
+                    "estimated_price": round(float(br_g["median_usd"]), 2),
+                    "nm_baseline_usd": None,
+                    "multiplier": None,
+                    "source": (
+                        f"{g_label} eBay Browse median (JP active listings, "
+                        f"n={br_g['sample_size']} of {br_g['raw_sample_size']}, "
+                        f"range ${br_g['low_usd']:.2f}-${br_g['high_usd']:.2f})"
+                    ),
+                    "note": (
+                        f"Trimmed-median of {br_g['sample_size']} active {g_label} listings "
+                        f"from eBay (query: {br_g['query']!r}). Based on active listings, "
+                        f"not completed sales — use as directional estimate."
+                    ),
+                }
 
     # ----- baseline lookup for raw or graded-fallback ----------------------
     nm_price: Optional[float] = None
@@ -1415,13 +1445,20 @@ STATIC_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR = Path(__file__).parent / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 
 @app.get("/")
 def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+# Serves index.html's relative asset references (styles.css, app.jsx,
+# screens/Detail.jsx, ...) directly from STATIC_DIR at the site root. Must be
+# mounted last — Starlette matches routes in registration order, so /api/*,
+# /uploads, and the explicit "/" route above all take precedence over this
+# catch-all.
+app.mount("/", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 # ---------------------------------------------------------------------------

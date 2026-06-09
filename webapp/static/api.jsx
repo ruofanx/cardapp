@@ -140,7 +140,19 @@
       glyph:     c.glyph || 'spark',
       variant:   c.variant ?? c.rarity ?? null,
       hp:        c.hp ?? null,
-      image_url: c.image_url ?? c.image ?? null,
+      // Strip EN-only image sources for JP/CH cards — EN card art on a JP
+      // card in the collection is misleading (different language text on card).
+      // pokemontcg.io = EN API CDN; assets.tcgdex.net/en/ = TCGdex EN path.
+      // TCGdex JA images live at assets.tcgdex.net/ja/ and are kept.
+      image_url: (() => {
+        const raw = c.image_url ?? c.image ?? null;
+        const lang = normalizeLang(c.language ?? c.lang);
+        if (raw && (lang === 'JP' || lang === 'CH')) {
+          if (raw.includes('images.pokemontcg.io')) return null;
+          if (raw.includes('assets.tcgdex.net/en/')) return null;
+        }
+        return raw;
+      })(),
       photo_path:c.photo_path ?? null,
       last_priced_at: c.last_priced_at ?? c.last_refreshed ?? null,
       notes:     c.notes ?? null,
@@ -360,7 +372,7 @@
       try {
         const res = await request(P.cardPriceHistory(cardId) + suffix);
         const points = Array.isArray(res?.points)
-          ? res.points.map(p => ({ at: p.at, price: Number(p.price) }))
+          ? res.points.map(p => ({ at: p.at, price: Number(p.price), source: p.source || null, source_url: p.source_url || null }))
                       .filter(p => Number.isFinite(p.price))
           : [];
         return {
@@ -624,11 +636,11 @@
           const cm = hit.pricing?.cardmarket;
           price = num(cm?.avg) ?? num(cm?.trend) ?? num(cm?.low);
         }
-        // TCGdex images need a size+ext suffix; high.png is highest quality.
-        const img = hit.image ? `${hit.image}/high.png` : null;
         // Result language tag — JP for the JA db, CH for zh-tw/zh-cn, else EN.
         const isJA = db === 'ja';
         const isZH = db.startsWith('zh');
+        // TCGdex images need a size+ext suffix; high.png is highest quality.
+        const img = hit.image ? `${hit.image}/high.png` : null;
         const langTag = isJA ? 'japanese' : (isZH ? 'chinese' : 'english');
         out.push(normalizeCard({
           id: `tcgdex-${db}-${hit.id}`,
