@@ -101,6 +101,7 @@ class CardCreate(BaseModel):
     current_market_price: Optional[float] = None
     image_url: Optional[str] = None
     notes: Optional[str] = None
+    product_type: str = "card"
     # Optional initial tags, applied after row creation. Same semantics as
     # CardPatch.tags — auto-create missing tags on the user's tag list.
     tags: Optional[list[str]] = None
@@ -121,6 +122,8 @@ class CardPatch(BaseModel):
     current_market_price: Optional[float] = None
     image_url: Optional[str] = None
     notes: Optional[str] = None
+    photo_path: Optional[str] = None
+    product_type: Optional[str] = None
     # When provided, this REPLACES the card's tag set. Names are matched
     # case-insensitively against the user's existing tags; new names are
     # auto-created. Pass [] to clear all tags.
@@ -137,6 +140,7 @@ class RefreshPriceRequest(BaseModel):
     is_graded: bool = False
     grade_company: Optional[str] = None
     grade: Optional[float] = None
+    product_type: str = "card"
 
 
 class SoldListingsRequest(BaseModel):
@@ -161,6 +165,18 @@ class TradeRequest(BaseModel):
     max_results: int = 10
     exclude_card_ids: list[int] = []
     filter_tag_id: Optional[int] = None     # restrict combos to cards with this tag
+
+
+class IdentifyResponse(BaseModel):
+    """Response schema for /api/identify. Centralised so callers can import
+    the shape for type-checking and tests."""
+    mode: str
+    identity: Optional[dict] = None
+    market_price: Optional[float] = None
+    image_url: Optional[str] = None
+    candidates: list = []
+    candidate_count: int = 0
+    product_type: str = "card"
 
 
 class TagCreate(BaseModel):
@@ -404,7 +420,8 @@ def delete_card(card_id: int):
 @app.post("/api/cards/{card_id}/photo")
 async def upload_card_photo(card_id: int, photo: UploadFile = File(...)):
     """Save a user-uploaded photo of this physical card. Stored under
-    uploads/, served via /uploads/<filename>. Replaces any prior upload."""
+    uploads/, served via /uploads/<filename>. Replaces any prior upload.
+    HEIC files are converted to JPEG so all browsers can display them."""
     card = db.get_card(card_id)
     if not card:
         raise HTTPException(404, "card not found")
@@ -414,9 +431,28 @@ async def upload_card_photo(card_id: int, photo: UploadFile = File(...)):
     suffix = Path(photo.filename or "card.jpg").suffix or ".jpg"
     if suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".heic"}:
         raise HTTPException(400, f"unsupported file type {suffix}")
-    fname = f"card_{card_id}_{int(datetime.utcnow().timestamp() * 1000)}{suffix}"
+
+    raw = await photo.read()
+    ts = int(datetime.utcnow().timestamp() * 1000)
+
+    # Convert HEIC → JPEG so all browsers can display it.
+    if suffix.lower() == ".heic":
+        try:
+            import pillow_heif
+            from PIL import Image as PilImage
+            import io
+            pillow_heif.register_heif_opener()
+            img = PilImage.open(io.BytesIO(raw))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90)
+            raw = buf.getvalue()
+            suffix = ".jpg"
+        except Exception as e:
+            log.warning("HEIC conversion failed, storing raw: %s", e)
+
+    fname = f"card_{card_id}_{ts}{suffix}"
     path = uploads_dir / fname
-    path.write_bytes(await photo.read())
+    path.write_bytes(raw)
 
     # Public URL (relative): /uploads/<fname>. The static mount at /uploads
     # serves the file from the same directory.
@@ -599,6 +635,42 @@ def _pick_multiplier(grade_company: str, grade: float,
     return GRADED_MULTIPLIERS.get(key)
 
 
+async def _refresh_sealed_price(req: RefreshPriceRequest) -> dict:
+    """Price lookup for sealed products: eBay first, PriceCharting fallback."""
+    from ebay_lookup import lookup_sealed_recent_n_mean
+    from pricecharting_lookup import lookup_sealed_price
+
+    ebay = await lookup_sealed_recent_n_mean(
+        name=req.name,
+        set_name=req.set_name or "",
+        product_type=req.product_type,
+        language=req.language or "english",
+        n=5,
+        period_days=90,
+    )
+    if ebay:
+        return {
+            "estimated_price": ebay.mean_usd,
+            "source": "ebay_sealed",
+            "image_url": None,
+        }
+
+    pc = await lookup_sealed_price(
+        name=req.name,
+        set_name=req.set_name or "",
+        product_type=req.product_type,
+        language=req.language or "english",
+    )
+    if pc and pc.ungraded_usd:
+        return {
+            "estimated_price": pc.ungraded_usd,
+            "source": "pricecharting_sealed",
+            "image_url": None,
+        }
+
+    return {"estimated_price": None, "source": "not_found", "image_url": None}
+
+
 @app.post("/api/refresh-price")
 async def refresh_price(req: RefreshPriceRequest):
     """Get a market-price estimate for a given condition or grade.
@@ -613,6 +685,9 @@ async def refresh_price(req: RefreshPriceRequest):
       - Raw    → PriceCharting Ungraded (for JP and old prints) → TCGplayer
         market price → eBay 30/60-day trimmed median (legacy)
     """
+    if req.product_type and req.product_type != "card":
+        return await _refresh_sealed_price(req)
+
     # ----- eBay 5-recent-mean (primary for both raw & graded) --------------
     ebay_recent = None
     if req.name:

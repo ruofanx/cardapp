@@ -134,3 +134,29 @@ def test_lookup_sealed_price_exists():
     sig = inspect.signature(lookup_sealed_price)
     assert "name" in sig.parameters
     assert "product_type" in sig.parameters
+
+
+# ---- app.py API schema tests ----
+
+def test_refresh_price_request_has_product_type():
+    """RefreshPriceRequest accepts product_type field."""
+    from app import RefreshPriceRequest
+    req = RefreshPriceRequest(name="Scarlet & Violet 151", product_type="booster_box")
+    assert req.product_type == "booster_box"
+
+def test_refresh_price_request_defaults_to_card():
+    """RefreshPriceRequest defaults product_type to 'card'."""
+    from app import RefreshPriceRequest
+    req = RefreshPriceRequest(name="Charizard")
+    assert req.product_type == "card"
+
+def test_card_create_has_product_type():
+    """CardCreate accepts product_type field."""
+    from app import CardCreate
+    cc = CardCreate(name="Scarlet & Violet 151 Booster Box", product_type="booster_box")
+    assert cc.product_type == "booster_box"
+
+def test_identify_response_has_product_type():
+    """IdentifyResponse includes product_type field."""
+    from app import IdentifyResponse
+    assert "product_type" in IdentifyResponse.model_fields
