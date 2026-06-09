@@ -658,9 +658,11 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                       }}>{cand.lang || 'EN'}</span>
                       <span style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{cand.name}</span>
                     </div>
+                    {!window.api?.isSealedProduct?.(cand) && (
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {cand.code}{cand.set ? ` · ${cand.set}` : ''}
                     </div>
+                    )}
                     {(cand.variant || cand._rarity) && (
                       <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 2 }}>{cand.variant || cand._rarity}</div>
                     )}

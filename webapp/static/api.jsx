@@ -164,7 +164,7 @@
     };
   }
   function isSealedProduct(card) {
-    return card.product_type !== "card";
+    return card.product_type != null && card.product_type !== "card";
   }
   const num = (v) => (v == null || v === '' || isNaN(Number(v))) ? null : Number(v);
   const cryptoId = () => 'c' + Math.random().toString(36).slice(2, 9);
