@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from pricing_engine import (
     CardIdentity, CardQuery, build_ebay_sold_url,
     parse_ebay_sold_html, aggregate_sales,
+    SealedProductQuery, build_ebay_sealed_url, is_relevant_sealed_title,
 )
 
 log = logging.getLogger(__name__)
@@ -317,6 +318,90 @@ async def lookup_recent_n_mean(
         sold_url=listings.sold_url,
         cached=listings.cached,
         is_graded=is_graded,
+        sales=picked,
+    )
+
+
+async def lookup_sealed_recent_n_mean(
+    name: str,
+    set_name: str = "",
+    product_type: str = "booster_box",
+    language: str = "english",
+    n: int = 5,
+    period_days: int = 90,
+) -> Optional[EbayRecentMean]:
+    """Fetch eBay sold listings for a sealed product; return mean of N most-recent.
+
+    Mirrors lookup_recent_n_mean but uses SealedProductQuery + is_relevant_sealed_title
+    instead of the card-specific query builder and title filter.
+    """
+    query = SealedProductQuery(
+        name=name,
+        set_name=set_name or name,
+        product_type=product_type,
+        language=language,
+    )
+    url = build_ebay_sealed_url(query)
+
+    cached = _cache_get(url)
+    if cached and "sales" in cached:
+        sales = cached.get("sales", [])[:max(n * 2, 25)]
+        sales_sorted = sorted(sales, key=lambda s: s.get("sold_date") or "", reverse=True)
+        picked = sales_sorted[:n]
+        prices = [float(s["price_usd"]) for s in picked if s.get("price_usd") is not None]
+        if prices:
+            mean = sum(prices) / len(prices)
+            mid = sorted(prices)
+            med = mid[len(mid) // 2] if len(mid) % 2 else (mid[len(mid) // 2 - 1] + mid[len(mid) // 2]) / 2
+            return EbayRecentMean(
+                mean_usd=round(mean, 2), median_usd=round(med, 2),
+                sample_size=len(prices), requested_n=n,
+                raw_sample_size=cached.get("raw_sample_size", len(prices)),
+                period_days=period_days,
+                low_usd=min(prices), high_usd=max(prices),
+                sold_url=url, cached=True, is_graded=False,
+                sales=picked,
+            )
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0,
+                                     headers={"User-Agent": USER_AGENT}) as client:
+            r = await client.get(url, follow_redirects=True)
+    except httpx.HTTPError as e:
+        log.warning("eBay sealed fetch failed: %s", e)
+        return None
+
+    if r.status_code != 200:
+        log.warning("eBay sealed returned %s for %s", r.status_code, url)
+        return None
+
+    parsed = parse_ebay_sold_html(r.text, period_days=period_days)
+    relevant = [s for s in parsed if is_relevant_sealed_title(s.title, query)]
+    relevant.sort(key=lambda s: s.sold_date, reverse=True)
+    sale_dicts = [_sale_to_dict(s) for s in relevant]
+
+    payload = {
+        "sales": sale_dicts,
+        "raw_sample_size": len(parsed),
+    }
+    _cache_set(url, payload)
+
+    picked = sale_dicts[:n]
+    prices = [float(s["price_usd"]) for s in picked if s.get("price_usd") is not None]
+    if not prices:
+        return None
+
+    mean = sum(prices) / len(prices)
+    mid = sorted(prices)
+    med = mid[len(mid) // 2] if len(mid) % 2 else (mid[len(mid) // 2 - 1] + mid[len(mid) // 2]) / 2
+
+    return EbayRecentMean(
+        mean_usd=round(mean, 2), median_usd=round(med, 2),
+        sample_size=len(prices), requested_n=n,
+        raw_sample_size=len(parsed),
+        period_days=period_days,
+        low_usd=min(prices), high_usd=max(prices),
+        sold_url=url, cached=False, is_graded=False,
         sales=picked,
     )
 

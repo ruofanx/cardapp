@@ -96,3 +96,15 @@ def test_is_relevant_sealed_title_filters_bare_lot():
 def test_is_relevant_sealed_title_accepts_good_listing():
     q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
     assert is_relevant_sealed_title('Pokemon Scarlet & Violet 151 Booster Box Factory Sealed', q)
+
+
+# ---- ebay_lookup sealed test (import-level smoke test) ----
+import inspect
+import ebay_lookup
+
+def test_lookup_sealed_recent_n_mean_exists():
+    assert hasattr(ebay_lookup, 'lookup_sealed_recent_n_mean')
+    sig = inspect.signature(ebay_lookup.lookup_sealed_recent_n_mean)
+    params = list(sig.parameters)
+    assert 'name' in params
+    assert 'product_type' in params
