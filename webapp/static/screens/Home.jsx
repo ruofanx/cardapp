@@ -81,6 +81,8 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   }, [cards, refreshPrice, backend?.online]);
 
   const totalUSD = ownedCards.reduce((s, c) => s + (Number(c.usd) || 0), 0);
+  const sealedUSD = ownedCards.filter(c => window.api?.isSealedProduct?.(c)).reduce((s, c) => s + (Number(c.usd) || 0), 0);
+  const cardsUSD  = totalUSD - sealedUSD;
 
   const { series: portfolio, cfg } = useMemoHome(
     () => buildPortfolioSeries(totalUSD, range),
@@ -281,6 +283,11 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
           {cur === 'BOTH' && !valueHidden && (
             <div className="mono" style={{ color: 'var(--ink-3)', fontSize: 14, marginTop: 2 }}>
               {fmtJPY(totalUSD)}
+            </div>
+          )}
+          {sealedUSD > 0 && !valueHidden && (
+            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>
+              Cards {fmtUSD(cardsUSD, { decimals: 0 })} · Sealed {fmtUSD(sealedUSD, { decimals: 0 })}
             </div>
           )}
           <div className="row gap-3" style={{ marginTop: 4, fontSize: 13 }}>

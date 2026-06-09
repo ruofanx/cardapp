@@ -73,6 +73,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
     if (filter === 'foil')   list = list.filter(c => c.holo);
     if (filter === 'jp')     list = list.filter(c => c.lang === 'JP');
     if (filter === 'graded') list = list.filter(c => c.grade);
+    if (filter === 'sealed') list = list.filter(c => window.api?.isSealedProduct?.(c));
     // Tag filter — card must have ALL selected tags (case-insensitive).
     if (selectedTags.size > 0) {
       list = list.filter(c => {
@@ -144,6 +145,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
           { id: 'foil', label: 'Foil only' },
           { id: 'jp', label: 'JP' },
           { id: 'graded', label: 'Graded' },
+          { id: 'sealed', label: 'Sealed' },
           { id: 'wishlist', label: 'Wishlist', count: wishlistCount },
         ].map(f => (
           <button key={f.id} className="tap" onClick={() => setFilter(f.id)} style={{
@@ -247,6 +249,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                     color: 'oklch(1 0 0 / 0.85)', fontSize: 8, fontWeight: 700,
                     letterSpacing: '0.05em', padding: '2px 5px', borderRadius: 4,
                   }}>BULK</div>}
+                  {window.api?.isSealedProduct?.(c) && (
+                    <div style={{ position: 'absolute', bottom: 4, left: 4 }}>
+                      <ProductTypeBadge type={c.product_type} />
+                    </div>
+                  )}
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
                 <div className="row" style={{ justifyContent: 'space-between', fontSize: 10 }}>
