@@ -104,6 +104,8 @@ DEFAULT_CACHE_PATH = (
     else Path(__file__).parent / "ocr_cache.sqlite"
 )
 
+VALID_PRODUCT_TYPES = {"card", "booster_pack", "booster_box", "etb", "tin", "bundle"}
+
 
 def _identity_key(identity: CardIdentity) -> str:
     return "|".join([
@@ -128,7 +130,8 @@ class IdentifyCache:
         source      TEXT NOT NULL,
         raw_llm_json TEXT,
         ocr_card_number TEXT,
-        ts          REAL NOT NULL
+        ts          REAL NOT NULL,
+        product_type TEXT NOT NULL DEFAULT 'card'
     );
     CREATE TABLE IF NOT EXISTS identity_index (
         identity_key TEXT PRIMARY KEY,
@@ -147,7 +150,7 @@ class IdentifyCache:
             self._conn.execute(
                 "ALTER TABLE identifications ADD COLUMN product_type TEXT NOT NULL DEFAULT 'card'"
             )
-        except Exception:
+        except sqlite3.OperationalError:
             pass
         self._conn.commit()
 
@@ -485,7 +488,6 @@ def _build_identity_from_json(raw: str):
             variant = "Holo"
 
     product_type = str(parsed.get("product_type", "card") or "card").lower().strip()
-    VALID_PRODUCT_TYPES = {"card", "booster_pack", "booster_box", "etb", "tin", "bundle"}
     if product_type not in VALID_PRODUCT_TYPES:
         product_type = "card"
 
@@ -641,6 +643,7 @@ def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_oc
         prior.identity = _correct_identity(prior.identity)
         prior.notes.append(f"new pHash for known identity ({cache.photo_count_for(identity)} photos so far)")
         prior.phash = phash
+        prior.product_type = product_type
         cache.store(prior)
         return prior
 

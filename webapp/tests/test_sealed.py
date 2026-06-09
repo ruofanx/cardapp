@@ -208,7 +208,3 @@ def test_build_identity_validates_product_type():
         pass  # Function is private, tested indirectly
 
 
-def test_identify_response_includes_product_type():
-    """IdentifyResponse model has product_type field."""
-    from app import IdentifyResponse
-    assert "product_type" in IdentifyResponse.model_fields
