@@ -71,6 +71,7 @@ class IdentifyResult:
     raw_llm_json: Optional[str] = None
     ocr_card_number: Optional[str] = None
     notes: list[str] = field(default_factory=list)
+    product_type: str = "card"
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +143,12 @@ class IdentifyCache:
         self.path = str(path)
         self._conn = sqlite3.connect(self.path)
         self._conn.executescript(self.SCHEMA)
+        try:
+            self._conn.execute(
+                "ALTER TABLE identifications ADD COLUMN product_type TEXT NOT NULL DEFAULT 'card'"
+            )
+        except Exception:
+            pass
         self._conn.commit()
 
     def lookup(self, phash):
@@ -182,10 +189,10 @@ class IdentifyCache:
         self._conn.execute(
             "INSERT OR REPLACE INTO identifications "
             "(phash,name,set_name,card_number,language,variant,confidence,source,"
-            "raw_llm_json,ocr_card_number,ts) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "raw_llm_json,ocr_card_number,ts,product_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (result.phash, i.name, i.set_name, i.card_number, i.language, i.variant,
              result.confidence, result.source, result.raw_llm_json,
-             result.ocr_card_number, now),
+             result.ocr_card_number, now, getattr(result, "product_type", "card")),
         )
         key = _identity_key(i)
         cur = self._conn.execute("SELECT photo_count FROM identity_index WHERE identity_key=?", (key,))
@@ -210,7 +217,9 @@ class IdentifyCache:
     @staticmethod
     def _row_to_result(row, query_phash):
         (phash, name, set_name, card_number, language, variant, confidence,
-         source, raw_llm_json, ocr_card_number, _ts) = row
+         source, raw_llm_json, ocr_card_number, _ts) = row[:11]
+        product_type = row[11] if len(row) > 11 else "card"
+        product_type = product_type or "card"
         return IdentifyResult(
             identity=CardIdentity(name=name, set_name=set_name, card_number=card_number,
                                    language=language, variant=variant),
@@ -219,6 +228,7 @@ class IdentifyCache:
             phash=phash,
             raw_llm_json=raw_llm_json,
             ocr_card_number=ocr_card_number,
+            product_type=product_type,
         )
 
 
@@ -286,6 +296,13 @@ For Japanese slabs you'll often see "P.M. JAPANESE SV" + an abbreviated set:
 If the slab label says "FA" or "SAR" or "SIR", set variant to "Special Art Rare".
 If "HR" or "HYPER", set variant to "Hyper Rare". If "GOLD" or "SECRET" (alone),
 "Gold Secret Rare". If "SR" + a rainbow/iridescent look, "Special Art Rare".
+
+SEALED PRODUCT RECOGNITION:
+Also identify if the image shows sealed product packaging rather than an individual card.
+If it is sealed product packaging, set product_type to one of: booster_pack, booster_box, etb, tin, bundle.
+If it is an individual card (or you cannot tell), set product_type to "card".
+For sealed products, card_number and variant should be null or empty.
+Add "product_type" to the JSON response alongside the other fields.
 
 - JSON only, no backticks, no prose.
 """
@@ -417,7 +434,8 @@ def _identify_with_anthropic(image_path: str, model: str):
         }],
     )
     raw = msg.content[0].text.strip()
-    return _build_identity_from_json(raw)
+    identity, confidence, raw_json, product_type = _build_identity_from_json(raw)
+    return identity, confidence, raw_json, product_type
 
 
 def _identify_with_gemini(image_path: str, model: str):
@@ -445,7 +463,8 @@ def _identify_with_gemini(image_path: str, model: str):
         request_options={"timeout": 30},
     )
     raw = response.text.strip()
-    return _build_identity_from_json(raw)
+    identity, confidence, raw_json, product_type = _build_identity_from_json(raw)
+    return identity, confidence, raw_json, product_type
 
 
 def _build_identity_from_json(raw: str):
@@ -465,6 +484,11 @@ def _build_identity_from_json(raw: str):
                      "have no 1st Edition; defaulting to Holo.", variant)
             variant = "Holo"
 
+    product_type = str(parsed.get("product_type", "card") or "card").lower().strip()
+    VALID_PRODUCT_TYPES = {"card", "booster_pack", "booster_box", "etb", "tin", "bundle"}
+    if product_type not in VALID_PRODUCT_TYPES:
+        product_type = "card"
+
     return (
         CardIdentity(
             name=parsed["name"].strip(),
@@ -475,6 +499,7 @@ def _build_identity_from_json(raw: str):
         ),
         float(parsed.get("confidence", 0.5)),
         raw,
+        product_type,
     )
 
 
@@ -607,7 +632,7 @@ def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_oc
                 log.warning("could not persist corrected cache entry: %s", e)
         return cached
 
-    identity, confidence, raw_json = identify_with_llm(image_path, model=llm_model)
+    identity, confidence, raw_json, product_type = identify_with_llm(image_path, model=llm_model)
     identity = _correct_identity(identity)
     notes = []
 
@@ -637,6 +662,7 @@ def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_oc
         raw_llm_json=raw_json,
         ocr_card_number=ocr_number,
         notes=notes,
+        product_type=product_type,
     )
     cache.store(result)
     return result

@@ -1491,6 +1491,7 @@ async def _identify_inner(request: Request):
 
     return {
         "mode": "photo_ocr",
+        "product_type": result.product_type,
         "identity": {
             "name": result.identity.name,
             "set_name": result.identity.set_name,

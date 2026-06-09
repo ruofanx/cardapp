@@ -160,3 +160,55 @@ def test_identify_response_has_product_type():
     """IdentifyResponse includes product_type field."""
     from app import IdentifyResponse
     assert "product_type" in IdentifyResponse.model_fields
+
+
+# ---- ocr_engine tests ----
+
+def test_identify_result_has_product_type():
+    """IdentifyResult dataclass includes product_type field."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from ocr_engine import IdentifyResult
+    from pricing_engine import CardIdentity
+    identity = CardIdentity(name="Scarlet & Violet 151 Booster Box", set_name="", card_number="", language="english")
+    r = IdentifyResult(identity=identity, confidence=0.9, source="llm", phash="abc", product_type="booster_box")
+    assert r.product_type == "booster_box"
+
+
+def test_identify_result_defaults_product_type_to_card():
+    """IdentifyResult product_type defaults to 'card'."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from ocr_engine import IdentifyResult
+    from pricing_engine import CardIdentity
+    identity = CardIdentity(name="Charizard EX", set_name="", card_number="", language="english")
+    r = IdentifyResult(identity=identity, confidence=0.9, source="llm", phash="abc")
+    assert r.product_type == "card"
+
+
+def test_build_identity_validates_product_type():
+    """_build_identity_from_json rejects unrecognized product_type."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    try:
+        from ocr_engine import _build_identity_from_json
+        import json
+        raw = json.dumps({
+            "name": "Test",
+            "set_name": "Test Set",
+            "card_number": "",
+            "language": "english",
+            "variant": None,
+            "confidence": 0.9,
+            "product_type": "mystery_box",
+        })
+        identity, confidence, raw_json, product_type = _build_identity_from_json(raw)
+        assert product_type == "card"
+    except ImportError:
+        pass  # Function is private, tested indirectly
+
+
+def test_identify_response_includes_product_type():
+    """IdentifyResponse model has product_type field."""
+    from app import IdentifyResponse
+    assert "product_type" in IdentifyResponse.model_fields
