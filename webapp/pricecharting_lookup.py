@@ -62,6 +62,14 @@ GRADE_TO_PC_ROW = {
     ("SGC", 8):     "Grade 8",
 }
 
+SEALED_PRODUCT_SLUGS: dict[str, str] = {
+    "booster_box":  "booster-box",
+    "etb":          "elite-trainer-box",
+    "booster_pack": "booster-pack",
+    "tin":          "tin",
+    "bundle":       "booster-bundle",
+}
+
 USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
               "AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/126.0.0.0 Safari/537.36")
@@ -414,3 +422,74 @@ async def lookup_graded_price(name: str, set_name: str, card_number: str,
             )
 
     return None
+
+
+async def lookup_sealed_price(
+    name: str,
+    set_name: str,
+    product_type: str,
+    language: str = "english",
+) -> "PriceChartingResult | None":
+    """Return a PriceChartingResult for a sealed product (booster box, ETB, etc.).
+
+    Builds a PriceCharting URL from the set slug and the product-type slug,
+    checks the 24h cache, fetches if needed, and parses the price table.
+    Looks for a "Sealed" row first; falls back to "Ungraded" if absent.
+
+    Returns None if `product_type` is not in SEALED_PRODUCT_SLUGS or if the
+    product page isn't in PriceCharting's catalogue.
+    """
+    product_slug = SEALED_PRODUCT_SLUGS.get(product_type)
+    if product_slug is None:
+        return None
+
+    set_slug = _slug(set_name or name)
+    if language.lower() == "japanese":
+        set_slug = set_slug + "-japanese"
+
+    url = f"{PC_BASE}/game/pokemon-{set_slug}/{product_slug}"
+
+    # Cache hit?
+    cached = _cache_get(url)
+    if cached is not None:
+        price_label = "Sealed" if "Sealed" in cached else "Ungraded"
+        return PriceChartingResult(
+            url=url,
+            grade_label=price_label,
+            price_usd=cached.get(price_label),
+            all_prices=cached,
+            cached=True,
+        )
+
+    # Cache miss — fetch
+    try:
+        async with httpx.AsyncClient(timeout=15.0,
+                                      headers={"User-Agent": USER_AGENT}) as client:
+            r = await client.get(url, follow_redirects=True)
+    except httpx.HTTPError as e:
+        log.warning("PriceCharting sealed fetch failed %s: %s", url, e)
+        return None
+
+    if r.status_code != 200:
+        log.warning("PriceCharting sealed returned %s for %s", r.status_code, url)
+        return None
+
+    final_path = str(r.url.path)
+    if final_path.startswith("/search-products") or final_path == "/":
+        log.info("PriceCharting sealed redirected %s → %s (not in catalogue)", url, r.url)
+        return None
+
+    prices = _parse_price_table(r.text)
+    if not prices:
+        return None
+
+    _cache_set(url, prices)
+
+    price_label = "Sealed" if "Sealed" in prices else "Ungraded"
+    return PriceChartingResult(
+        url=url,
+        grade_label=price_label,
+        price_usd=prices.get(price_label),
+        all_prices=prices,
+        cached=False,
+    )

@@ -108,3 +108,29 @@ def test_lookup_sealed_recent_n_mean_exists():
     params = list(sig.parameters)
     assert 'name' in params
     assert 'product_type' in params
+
+
+# ---- pricecharting_lookup sealed tests ----
+
+def test_lookup_sealed_price_slug_mapping():
+    """SEALED_PRODUCT_SLUGS maps all five product types."""
+    from pricecharting_lookup import SEALED_PRODUCT_SLUGS
+    assert SEALED_PRODUCT_SLUGS["booster_box"] == "booster-box"
+    assert SEALED_PRODUCT_SLUGS["etb"] == "elite-trainer-box"
+    assert SEALED_PRODUCT_SLUGS["booster_pack"] == "booster-pack"
+    assert SEALED_PRODUCT_SLUGS["tin"] == "tin"
+    assert SEALED_PRODUCT_SLUGS["bundle"] == "booster-bundle"
+
+def test_lookup_sealed_price_unknown_type_returns_none():
+    """Unknown product_type returns None without fetching."""
+    import asyncio
+    from pricecharting_lookup import lookup_sealed_price
+    result = asyncio.run(lookup_sealed_price("Base Set", "Base Set", "mystery_box"))
+    assert result is None
+
+def test_lookup_sealed_price_exists():
+    """lookup_sealed_price is importable with correct signature."""
+    from pricecharting_lookup import lookup_sealed_price
+    sig = inspect.signature(lookup_sealed_price)
+    assert "name" in sig.parameters
+    assert "product_type" in sig.parameters
