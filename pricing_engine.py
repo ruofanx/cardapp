@@ -176,7 +176,7 @@ def is_relevant_sealed_title(title: str, query: SealedProductQuery) -> bool:
     t = title.lower()
     if any(j in t for j in ("opened", "resealed", "empty box", "factory seconds")):
         return False
-    if re.search(r"\b(lot of|x[2-9]|[2-9]x|\d+ packs)\b", t):
+    if re.search(r"\b(lot of|lot|x[2-9]|[2-9]x|\d+ packs)\b", t):
         return False
     search_text = query.set_name or query.name
     tokens = [w.lower() for w in re.findall(r"\w+", search_text) if len(w) > 2]

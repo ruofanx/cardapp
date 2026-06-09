@@ -89,6 +89,10 @@ def test_is_relevant_sealed_title_filters_lot():
     q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
     assert not is_relevant_sealed_title('Pokemon 151 Booster Box x3 lot', q)
 
+def test_is_relevant_sealed_title_filters_bare_lot():
+    q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
+    assert not is_relevant_sealed_title('Pokemon Scarlet & Violet 151 Booster Box sealed lot', q)
+
 def test_is_relevant_sealed_title_accepts_good_listing():
     q = SealedProductQuery(name='Scarlet & Violet 151', set_name='Scarlet & Violet 151', product_type='booster_box')
     assert is_relevant_sealed_title('Pokemon Scarlet & Violet 151 Booster Box Factory Sealed', q)
