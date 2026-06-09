@@ -362,6 +362,7 @@ async def lookup_sealed_recent_n_mean(
                 sold_url=url, cached=True, is_graded=False,
                 sales=picked,
             )
+        return None
 
     try:
         async with httpx.AsyncClient(timeout=15.0,
