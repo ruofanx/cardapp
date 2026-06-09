@@ -443,11 +443,9 @@ async def lookup_sealed_price(
     if product_slug is None:
         return None
 
+    jp_prefix = "japanese-" if language.lower() == "japanese" else ""
     set_slug = _slug(set_name or name)
-    if language.lower() == "japanese":
-        set_slug = set_slug + "-japanese"
-
-    url = f"{PC_BASE}/game/pokemon-{set_slug}/{product_slug}"
+    url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{product_slug}"
 
     # Cache hit?
     cached = _cache_get(url)
