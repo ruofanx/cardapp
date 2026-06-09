@@ -144,21 +144,27 @@
       // card in the collection is misleading (different language text on card).
       // pokemontcg.io = EN API CDN; assets.tcgdex.net/en/ = TCGdex EN path.
       // TCGdex JA images live at assets.tcgdex.net/ja/ and are kept.
+      // Exception: SV-era EN tcgdex images are allowed because JP and EN SV
+      // cards share identical illustration art (JP is the source).
       image_url: (() => {
         const raw = c.image_url ?? c.image ?? null;
         const lang = normalizeLang(c.language ?? c.lang);
         if (raw && (lang === 'JP' || lang === 'CH')) {
           if (raw.includes('images.pokemontcg.io')) return null;
-          if (raw.includes('assets.tcgdex.net/en/')) return null;
+          if (raw.includes('assets.tcgdex.net/en/') && !raw.includes('/en/sv/')) return null;
         }
         return raw;
       })(),
+      product_type: c.product_type || "card",
       photo_path:c.photo_path ?? null,
       last_priced_at: c.last_priced_at ?? c.last_refreshed ?? null,
       notes:     c.notes ?? null,
       tags:      c.tags ?? [],
       raw:       c,
     };
+  }
+  function isSealedProduct(card) {
+    return card.product_type !== "card";
   }
   const num = (v) => (v == null || v === '' || isNaN(Number(v))) ? null : Number(v);
   const cryptoId = () => 'c' + Math.random().toString(36).slice(2, 9);
@@ -309,6 +315,7 @@
         is_graded:     Boolean(card.is_graded ?? card.grade),
         grade_company: card.grader ?? null,
         grade:         card.grade ?? null,
+        product_type:  card.product_type || "card",
       };
       const res = await request(P.refreshPrice(), { method: 'POST', body });
       return {
@@ -334,6 +341,7 @@
         is_graded:     Boolean(card.is_graded ?? card.grade),
         grade_company: card.grader ?? null,
         grade:         card.grade ?? null,
+        product_type:  card.product_type || "card",
       };
       const res = await request(P.refreshPrice(), { method: 'POST', body });
       const newPrice = num(res?.estimated_price);
@@ -756,10 +764,17 @@
       });
     },
 
-    async proposeTrade({ user_id, give_ids, get_ids }) {
+    async proposeTrade({ user_id, target_value, tolerance = 5.0, max_combo_size = 5, max_results = 10, exclude_card_ids = [] }) {
       return request(P.tradePropose(), {
         method: 'POST',
-        body: { user_id: user_id ?? state.currentUserId, give_ids, get_ids },
+        body: {
+          user_id: user_id ?? state.currentUserId,
+          target_value,
+          tolerance,
+          max_combo_size,
+          max_results,
+          exclude_card_ids,
+        },
       });
     },
 
@@ -783,6 +798,7 @@
     async bootstrap() { return true; },
 
     normalizeCard,
+    isSealedProduct,
   };
 
   window.api = api;

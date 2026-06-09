@@ -485,10 +485,40 @@ function NavBackButton({ onClick, label = 'Back' }) {
   );
 }
 
+// ============================================================================
+// Product type badge — sealed product label chip
+// ============================================================================
+function ProductTypeBadge({ type }) {
+  const labels = {
+    booster_pack: "Booster Pack",
+    booster_box:  "Booster Box",
+    etb:          "Elite Trainer Box",
+    tin:          "Tin",
+    bundle:       "Bundle",
+  };
+  const label = labels[type];
+  if (!label) return null;
+  return (
+    <span style={{
+      display: "inline-block",
+      padding: "2px 8px",
+      borderRadius: "12px",
+      fontSize: "11px",
+      fontWeight: 600,
+      background: "#e8f4fd",
+      color: "#1a73e8",
+      marginLeft: "4px",
+    }}>
+      {label}
+    </span>
+  );
+}
+
 // Export to window
 Object.assign(window, {
   FX,
   fmtUSD, fmtJPY, fmtPrice,
   TWEAK_DEFAULTS,
   Sparkline, CardArt, Price, Icon, TabBar, NavBar, NavBackButton,
+  ProductTypeBadge,
 });
