@@ -681,6 +681,12 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
             background: 'var(--bg-1)', border: '1px solid var(--hairline-soft)',
             display: 'flex', flexDirection: 'column', gap: 8,
           }}>
+            {/* Sealed product badge — shown instead of condition/grade fields */}
+            {window.api?.isSealedProduct(card) && (
+              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                <ProductTypeBadge type={card.product_type} />
+              </div>
+            )}
             {/* Language */}
             <div className="row" style={{ gap: 6, alignItems: 'center' }}>
               <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>LANG</div>
@@ -695,8 +701,8 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                 ))}
               </div>
             </div>
-            {/* Condition (only when raw) */}
-            {!isGraded && (
+            {/* Condition (only when raw, and not a sealed product) */}
+            {!isGraded && !window.api?.isSealedProduct(card) && (
               <div className="row" style={{ gap: 6, alignItems: 'center' }}>
                 <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>COND</div>
                 <div style={{ display: 'flex', gap: 4, flex: 1 }}>
@@ -711,22 +717,24 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                 </div>
               </div>
             )}
-            {/* Grader */}
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>GRADE</div>
-              <div style={{ display: 'flex', gap: 4, flex: 1 }}>
-                {GRADERS.map(G => (
-                  <button key={G} className="tap" onClick={() => setGrader(G)} style={{
-                    flex: 1, padding: '6px 0', borderRadius: 8,
-                    background: grader === G ? 'var(--bg-3)' : 'var(--bg-2)',
-                    color: grader === G ? 'var(--ink)' : 'var(--ink-3)',
-                    fontWeight: 600, fontSize: 11, border: grader === G ? '1px solid var(--accent)' : '1px solid transparent',
-                  }}>{G}</button>
-                ))}
+            {/* Grader (hidden for sealed products) */}
+            {!window.api?.isSealedProduct(card) && (
+              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>GRADE</div>
+                <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                  {GRADERS.map(G => (
+                    <button key={G} className="tap" onClick={() => setGrader(G)} style={{
+                      flex: 1, padding: '6px 0', borderRadius: 8,
+                      background: grader === G ? 'var(--bg-3)' : 'var(--bg-2)',
+                      color: grader === G ? 'var(--ink)' : 'var(--ink-3)',
+                      fontWeight: 600, fontSize: 11, border: grader === G ? '1px solid var(--accent)' : '1px solid transparent',
+                    }}>{G}</button>
+                  ))}
+                </div>
               </div>
-            </div>
-            {/* Grade number (only if graded) */}
-            {isGraded && (
+            )}
+            {/* Grade number (only if graded, and not a sealed product) */}
+            {isGraded && !window.api?.isSealedProduct(card) && (
               <div className="row" style={{ gap: 6, alignItems: 'center' }}>
                 <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>GRD #</div>
                 <div style={{ display: 'flex', gap: 4, flex: 1, overflowX: 'auto', scrollbarWidth: 'none' }}>

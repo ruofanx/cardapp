@@ -167,6 +167,11 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   // Reflect updates from app state when collection refreshes the card.
   const live = (collection || []).find(x => x.id === params.card?.id);
   const c = live || params.card || (window.CARDS && window.CARDS[0]) || {};
+  const _base = window.api?.state?.base || 'http://localhost:8000';
+  const serverPhotoUrl = c.photo_path ? `${_base}${c.photo_path}` : null;
+  const allPhotos = serverPhotoUrl
+    ? [{ url: serverPhotoUrl, ts: 'server', isServer: true }, ...userPhotos]
+    : userPhotos;
 
   // Real price history fetched from the backend. The /api/cards/{id}/price-history
   // endpoint returns every recorded snapshot for this card, oldest first.
@@ -352,9 +357,17 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
       setUploadingPhoto(false);
     }
   };
-  const handleRemovePhoto = (idx) => {
+  const handleRemovePhoto = async (idx) => {
     if (!c.id) return;
-    window.userPhotos.remove(c.id, idx);
+    const photo = allPhotos[idx];
+    if (photo?.isServer) {
+      try {
+        await fetch(`${_base}/api/cards/${c.id}/photo`, { method: 'DELETE' });
+        if (updateCard) await updateCard(c.id, { photo_path: null });
+      } catch (_) {}
+    } else {
+      window.userPhotos.remove(c.id, serverPhotoUrl ? idx - 1 : idx);
+    }
     setLightboxIdx(null);
   };
 
@@ -754,7 +767,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
 
       <div className="screen-scroll">
         {/* Lightbox for user photos */}
-        {lightboxIdx != null && userPhotos[lightboxIdx] && (
+        {lightboxIdx != null && allPhotos[lightboxIdx] && (
           <div onClick={() => setLightboxIdx(null)} style={{
             position: 'absolute', inset: 0, zIndex: 110,
             background: 'oklch(0 0 0 / 0.92)',
@@ -763,7 +776,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
             animation: 'fadeIn 0.15s ease-out',
           }}>
             <img
-              src={userPhotos[lightboxIdx].url}
+              src={allPhotos[lightboxIdx].url}
               alt={`User photo ${lightboxIdx + 1}`}
               style={{ maxWidth: '100%', maxHeight: '85%', objectFit: 'contain', borderRadius: 12, boxShadow: '0 16px 40px oklch(0 0 0 / 0.6)' }}
               onClick={(e) => e.stopPropagation()}
@@ -791,7 +804,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
               position: 'absolute', bottom: 24, left: 16, right: 16, textAlign: 'center',
               color: 'oklch(1 0 0 / 0.5)', fontSize: 11,
             }}>
-              {lightboxIdx + 1} of {userPhotos.length}
+              {lightboxIdx + 1} of {allPhotos.length}
             </div>
           </div>
         )}
@@ -821,8 +834,13 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
             )}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.15 }}>{c.name}</div>
-            <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{c.code}</div>
+            <div className="row gap-2" style={{ alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.15, flex: 1, minWidth: 0 }}>{c.name}</div>
+              {window.api?.isSealedProduct(c) && <ProductTypeBadge type={c.product_type} />}
+            </div>
+            {!window.api?.isSealedProduct(c) && (
+              <div className="mono" style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 4 }}>{c.code}</div>
+            )}
             <div className="row gap-1" style={{ marginTop: 10, flexWrap: 'wrap' }}>
               {c.variant && <span className="chip chip-strong">{c.variant}</span>}
               {c.is_graded && (c.grader || c.grade != null) && (
@@ -862,7 +880,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
         <div style={{ padding: '4px 0 14px' }}>
           <div className="row" style={{ padding: '0 16px 8px', justifyContent: 'space-between', alignItems: 'baseline' }}>
             <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              My photos {userPhotos.length > 0 ? `· ${userPhotos.length}` : ''}
+              My photos {allPhotos.length > 0 ? `· ${allPhotos.length}` : ''}
             </div>
             <button className="tap" onClick={handlePickPhoto} disabled={uploadingPhoto || !c.id} style={{
               fontSize: 13, fontWeight: 600, color: 'var(--accent)',
@@ -883,7 +901,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
               <Icon name="plus" size={20}/>
               <span style={{ fontSize: 10, fontWeight: 500 }}>{uploadingPhoto ? 'Saving…' : 'Add photo'}</span>
             </button>
-            {userPhotos.map((p, i) => (
+            {allPhotos.map((p, i) => (
               <button key={p.ts + '-' + i} className="tap" onClick={() => setLightboxIdx(i)} style={{
                 width: 80, height: 112, flexShrink: 0,
                 borderRadius: 10, overflow: 'hidden',
@@ -896,76 +914,80 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
               </button>
             ))}
           </div>
-          {userPhotos.length === 0 && (
+          {allPhotos.length === 0 && (
             <div style={{ padding: '6px 16px 0', fontSize: 11, color: 'var(--ink-4)' }}>
               Add slab, back, or condition shots — stored on this device.
             </div>
           )}
         </div>
 
-        {/* Lang + Raw/Graded toggle + sub-picker */}
+        {/* Lang + Raw/Graded toggle + sub-picker (hidden for sealed products) */}
         <div style={{ padding: '0 16px' }}>
-          <div className="row gap-2" style={{ marginBottom: 8 }}>
-            <div className="row" style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-              {['EN', 'JP'].map(L => (
-                <button key={L} className="tap" onClick={() => setLang(L)} style={{
-                  flex: 1, padding: '7px 0', borderRadius: 8,
-                  background: lang === L ? 'var(--bg-3)' : 'transparent',
-                  color: lang === L ? 'var(--ink)' : 'var(--ink-3)',
-                  fontWeight: 600, fontSize: 13,
-                }}>{L}</button>
-              ))}
-            </div>
-            <div className="row" style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-              {[['raw', 'Raw'], ['graded', 'Graded']].map(([v, label]) => (
-                <button key={v} className="tap" onClick={() => setGrading(v)} style={{
-                  flex: 1, padding: '7px 0', borderRadius: 8,
-                  background: grading === v ? 'var(--bg-3)' : 'transparent',
-                  color: grading === v ? 'var(--ink)' : 'var(--ink-3)',
-                  fontWeight: 600, fontSize: 13,
-                }}>{label}</button>
-              ))}
-            </div>
-          </div>
+          {!window.api?.isSealedProduct(c) && (
+            <>
+              <div className="row gap-2" style={{ marginBottom: 8 }}>
+                <div className="row" style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
+                  {['EN', 'JP'].map(L => (
+                    <button key={L} className="tap" onClick={() => setLang(L)} style={{
+                      flex: 1, padding: '7px 0', borderRadius: 8,
+                      background: lang === L ? 'var(--bg-3)' : 'transparent',
+                      color: lang === L ? 'var(--ink)' : 'var(--ink-3)',
+                      fontWeight: 600, fontSize: 13,
+                    }}>{L}</button>
+                  ))}
+                </div>
+                <div className="row" style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
+                  {[['raw', 'Raw'], ['graded', 'Graded']].map(([v, label]) => (
+                    <button key={v} className="tap" onClick={() => setGrading(v)} style={{
+                      flex: 1, padding: '7px 0', borderRadius: 8,
+                      background: grading === v ? 'var(--bg-3)' : 'transparent',
+                      color: grading === v ? 'var(--ink)' : 'var(--ink-3)',
+                      fontWeight: 600, fontSize: 13,
+                    }}>{label}</button>
+                  ))}
+                </div>
+              </div>
 
-          {grading === 'raw' ? (
-            <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-              {['NM', 'LP', 'MP', 'HP', 'DMG'].map(g => (
-                <button key={g} className="tap" onClick={() => setCondition(g)} style={{
-                  flex: 1, padding: '7px 0', borderRadius: 8,
-                  background: condition === g ? 'var(--bg-3)' : 'transparent',
-                  color: condition === g ? 'var(--ink)' : 'var(--ink-3)',
-                  fontWeight: 600, fontSize: 12,
-                }}>{g}</button>
-              ))}
-            </div>
-          ) : (
-            <div className="col" style={{ gap: 6 }}>
-              <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-                {Object.keys(GRADE_OPTIONS).map(g => (
-                  <button key={g} className="tap" onClick={() => {
-                    setGrader(g);
-                    // Snap grade to nearest valid value for the new grader.
-                    if (!GRADE_OPTIONS[g].includes(grade)) setGrade(GRADE_OPTIONS[g][0]);
-                  }} style={{
-                    flex: 1, padding: '7px 0', borderRadius: 8,
-                    background: grader === g ? 'var(--bg-3)' : 'transparent',
-                    color: grader === g ? 'var(--ink)' : 'var(--ink-3)',
-                    fontWeight: 600, fontSize: 12,
-                  }}>{g}</button>
-                ))}
-              </div>
-              <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3, gap: 2, overflowX: 'auto', scrollbarWidth: 'none' }}>
-                {GRADE_OPTIONS[grader].map(n => (
-                  <button key={n} className="tap" onClick={() => setGrade(n)} style={{
-                    flex: '1 0 auto', minWidth: 38, padding: '7px 6px', borderRadius: 8,
-                    background: grade === n ? 'var(--bg-3)' : 'transparent',
-                    color: grade === n ? 'var(--ink)' : 'var(--ink-3)',
-                    fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
-                  }}>{gradeButtonLabel(grader, n)}</button>
-                ))}
-              </div>
-            </div>
+              {grading === 'raw' ? (
+                <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
+                  {['NM', 'LP', 'MP', 'HP', 'DMG'].map(g => (
+                    <button key={g} className="tap" onClick={() => setCondition(g)} style={{
+                      flex: 1, padding: '7px 0', borderRadius: 8,
+                      background: condition === g ? 'var(--bg-3)' : 'transparent',
+                      color: condition === g ? 'var(--ink)' : 'var(--ink-3)',
+                      fontWeight: 600, fontSize: 12,
+                    }}>{g}</button>
+                  ))}
+                </div>
+              ) : (
+                <div className="col" style={{ gap: 6 }}>
+                  <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
+                    {Object.keys(GRADE_OPTIONS).map(g => (
+                      <button key={g} className="tap" onClick={() => {
+                        setGrader(g);
+                        // Snap grade to nearest valid value for the new grader.
+                        if (!GRADE_OPTIONS[g].includes(grade)) setGrade(GRADE_OPTIONS[g][0]);
+                      }} style={{
+                        flex: 1, padding: '7px 0', borderRadius: 8,
+                        background: grader === g ? 'var(--bg-3)' : 'transparent',
+                        color: grader === g ? 'var(--ink)' : 'var(--ink-3)',
+                        fontWeight: 600, fontSize: 12,
+                      }}>{g}</button>
+                    ))}
+                  </div>
+                  <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3, gap: 2, overflowX: 'auto', scrollbarWidth: 'none' }}>
+                    {GRADE_OPTIONS[grader].map(n => (
+                      <button key={n} className="tap" onClick={() => setGrade(n)} style={{
+                        flex: '1 0 auto', minWidth: 38, padding: '7px 6px', borderRadius: 8,
+                        background: grade === n ? 'var(--bg-3)' : 'transparent',
+                        color: grade === n ? 'var(--ink)' : 'var(--ink-3)',
+                        fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
+                      }}>{gradeButtonLabel(grader, n)}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* Save / Discard banner — appears when draft selectors diverge
