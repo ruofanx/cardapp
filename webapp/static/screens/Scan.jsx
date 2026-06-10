@@ -118,6 +118,13 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
         }
         for (const c of widened) {
           if (c.image_url) continue;
+          // The OCR seed (widened[0]) with a known card number but no
+          // image means the backend already checked and found no
+          // catalogue entry for THAT printing — a same-name sibling here
+          // is a different printing with different art (e.g. a brand-new
+          // promo vs. an older base print). Don't borrow its image; let
+          // ScanResultSheet fall back to the user's captured photo.
+          if (c === widened[0] && c.code) continue;
           const lang = c.lang || 'EN';
           const bn   = baseNameOf(c);
           const lk   = `${lang}|${bn}`;
@@ -140,6 +147,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
         }
         for (const c of widened) {
           if (c.image_url) continue;
+          if (c === widened[0] && c.code) continue;
           const bn = baseNameOf(c);
           if (anyLangMap.has(bn)) c.image_url = anyLangMap.get(bn);
         }

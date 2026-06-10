@@ -304,3 +304,47 @@ def test_identify_photo_card_hint_forces_card_routing(monkeypatch):
     assert captured['hint'] == "card"
 
 
+def test_identify_photo_number_mismatch_skips_broad_image(monkeypatch):
+    """A broad name-only search hit whose printed number doesn't match what
+    OCR read off the photo is a DIFFERENT printing (different art) — its
+    image_url must not become the response's top-level image_url, so the
+    frontend falls back to the user's own captured photo instead of showing
+    the wrong card's artwork."""
+    from card_lookup import CardLookupResult
+
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    fake_result = _fake_identify_result("card", name="N's Zekrom")
+    fake_result.identity.card_number = "031"
+    monkeypatch.setattr(
+        ocr_engine_module, "identify_card",
+        lambda path, product_type_hint=None: fake_result,
+    )
+
+    async def fake_lookup_card(**kw):
+        return None  # structured lookup rejects (score below threshold)
+    monkeypatch.setattr(app_module.card_lookup, "lookup_card", fake_lookup_card)
+
+    async def fake_search_cards(*a, **k):
+        return [CardLookupResult(
+            name="N's Zekrom", set_name="Ascended Heroes", card_number="155",
+            image_url="https://images.scrydex.com/pokemon/me2pt5-155/small",
+            image_url_large="https://images.scrydex.com/pokemon/me2pt5-155/large",
+            rarity="Rare", market_price=None, tcg_id="me2pt5-155",
+        )]
+    monkeypatch.setattr(app_module.card_lookup, "search_cards", fake_search_cards)
+
+    import ebay_browse_api
+    async def fake_search_items(*a, **k):
+        return []
+    monkeypatch.setattr(ebay_browse_api, "search_items", fake_search_items)
+
+    client = TestClient(app_module.app)
+    res = client.post("/api/identify", files={"photo": ("card.jpg", b"fake", "image/jpeg")})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["image_url"] is None
+    # The broad result is still surfaced as a candidate the user can pick,
+    # with its OWN (correct, for that printing) image.
+    assert data["candidates"][0]["image_url"] == "https://images.scrydex.com/pokemon/me2pt5-155/small"
+
+

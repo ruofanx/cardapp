@@ -1493,7 +1493,18 @@ async def _identify_inner(request: Request):
             if not market_price and broad:
                 market_price = broad[0].market_price
             if not image_url and broad:
-                image_url = broad[0].image_url
+                # Only trust this as THIS card's artwork if the printed
+                # number OCR read off the photo agrees with the broad
+                # (name-only) match's number. A name-only hit can be a
+                # different printing of the same Pokemon (e.g. a brand-new
+                # promo not yet in the catalogue vs. an older base-set
+                # rare) with completely different art — showing that art
+                # as "this card" is misleading. Leave image_url null; the
+                # frontend falls back to the user's own captured photo.
+                ocr_num = card_lookup._normalize_number(result.identity.card_number)
+                broad_num = card_lookup._normalize_number(broad[0].card_number)
+                if not ocr_num or ocr_num == broad_num:
+                    image_url = broad[0].image_url
         except Exception as e:
             log.warning("photo-path broad search failed: %s", e)
 
