@@ -282,9 +282,13 @@
 
     // Photo identify only — backend route is `photo: UploadFile = File(...)`.
     // Response shape: { identity: { name, set_name, card_number }, market_price, image_url }
-    async identifyPhoto(file) {
+    // `productTypeHint` ("card" | "sealed") comes from the Scan screen's
+    // pre-scan TYPE toggle — passed through so the backend can bias the OCR
+    // prompt and (for "card") force the response's product_type.
+    async identifyPhoto(file, productTypeHint) {
       const fd = new FormData();
       fd.append('photo', file);
+      if (productTypeHint && productTypeHint !== 'auto') fd.append('product_type_hint', productTypeHint);
       const res = await request(P.identify(), { method: 'POST', body: fd });
       // Flatten nested `identity` so normalizeCard can pick the right fields.
       const flat = { ...(res?.identity || {}), ...res };
@@ -293,8 +297,8 @@
     },
 
     // Unified entry point used by Scan: photo path → /api/identify, text path → /api/cards/search.
-    async identify({ query, image }) {
-      if (image) return this.identifyPhoto(image);
+    async identify({ query, image, productTypeHint }) {
+      if (image) return this.identifyPhoto(image, productTypeHint);
       if (query) return this.searchCards(query);
       return [];
     },

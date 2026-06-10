@@ -356,7 +356,24 @@ def _gemini_model(m: Optional[str]) -> str:
     return m if m and m.lower().startswith("gemini") else DEFAULT_GEMINI_MODEL
 
 
-def identify_with_llm(image_path: str, model: Optional[str] = None):
+# User-facing instruction sent alongside the image. A pre-scan type hint
+# (from the Scan screen's Auto/Card/Sealed toggle) biases the LLM toward the
+# right branch of the SEALED PRODUCT RECOGNITION rules without overriding its
+# judgment outright — if the photo clearly contradicts the hint, the schema
+# still allows it to return the correct product_type.
+def _identify_user_prompt(product_type_hint: Optional[str] = None) -> str:
+    if product_type_hint == "sealed":
+        return ("Identify this product. The user indicated this is sealed product "
+                "packaging (booster pack/box, Elite Trainer Box, tin, or bundle) "
+                "rather than an individual card — read the product/set name from "
+                "the box art and set product_type to the matching sealed type.")
+    if product_type_hint == "card":
+        return ("Identify this card. The user indicated this is an individual "
+                "card rather than sealed packaging.")
+    return "Identify this card."
+
+
+def identify_with_llm(image_path: str, model: Optional[str] = None, product_type_hint: Optional[str] = None):
     """Identify a card via Gemini (default) with Claude as a last-resort fallback.
 
     Hard rule: if GOOGLE_API_KEY is set, Gemini is used. Claude is only
@@ -396,8 +413,8 @@ def identify_with_llm(image_path: str, model: Optional[str] = None):
 
     def _run(provider: str):
         if provider == "anthropic":
-            return _identify_with_anthropic(image_path, _claude_model(model))
-        return _identify_with_gemini(image_path, _gemini_model(model))
+            return _identify_with_anthropic(image_path, _claude_model(model), product_type_hint)
+        return _identify_with_gemini(image_path, _gemini_model(model), product_type_hint)
 
     try:
         return _run(primary)
@@ -411,7 +428,7 @@ def identify_with_llm(image_path: str, model: Optional[str] = None):
         raise
 
 
-def _identify_with_anthropic(image_path: str, model: str):
+def _identify_with_anthropic(image_path: str, model: str, product_type_hint: Optional[str] = None):
     if anthropic is None:
         raise RuntimeError("pip install anthropic")
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -432,7 +449,7 @@ def _identify_with_anthropic(image_path: str, model: str):
             "content": [
                 {"type": "image",
                  "source": {"type": "base64", "media_type": media_type, "data": image_b64}},
-                {"type": "text", "text": "Identify this card."},
+                {"type": "text", "text": _identify_user_prompt(product_type_hint)},
             ],
         }],
     )
@@ -441,7 +458,7 @@ def _identify_with_anthropic(image_path: str, model: str):
     return identity, confidence, raw_json, product_type
 
 
-def _identify_with_gemini(image_path: str, model: str):
+def _identify_with_gemini(image_path: str, model: str, product_type_hint: Optional[str] = None):
     """Free-tier path. Get a key at https://aistudio.google.com/apikey."""
     if genai is None:
         raise RuntimeError("pip install google-generativeai")
@@ -462,7 +479,7 @@ def _identify_with_gemini(image_path: str, model: str):
         raise RuntimeError("pip install Pillow (needed to load images for Gemini)")
     img = Image.open(image_path)
     response = gemini_model.generate_content(
-        [img, "Identify this card."],
+        [img, _identify_user_prompt(product_type_hint)],
         request_options={"timeout": 30},
     )
     raw = response.text.strip()
@@ -612,7 +629,7 @@ def _correct_identity(identity: "CardIdentity") -> "CardIdentity":
     return identity
 
 
-def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_ocr=True):
+def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_ocr=True, product_type_hint=None):
     if cache is None:
         cache = IdentifyCache()
 
@@ -634,7 +651,8 @@ def identify_card(image_path, cache=None, *, llm_model=DEFAULT_LLM_MODEL, use_oc
                 log.warning("could not persist corrected cache entry: %s", e)
         return cached
 
-    identity, confidence, raw_json, product_type = identify_with_llm(image_path, model=llm_model)
+    identity, confidence, raw_json, product_type = identify_with_llm(
+        image_path, model=llm_model, product_type_hint=product_type_hint)
     identity = _correct_identity(identity)
     notes = []
 

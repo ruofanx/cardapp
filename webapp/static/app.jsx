@@ -202,10 +202,10 @@ function App() {
     }
   }, [backend.online, collection]);
 
-  const identifyCard = useCallbackApp(async ({ query, image }) => {
+  const identifyCard = useCallbackApp(async ({ query, image, productTypeHint }) => {
     if (!window.api) return [];
     try {
-      const candidates = await window.api.identify({ query, image });
+      const candidates = await window.api.identify({ query, image, productTypeHint });
       setBackend(b => ({ ...b, online: true, error: null }));
       return candidates;
     } catch (e) {

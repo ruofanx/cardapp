@@ -19,6 +19,11 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
   // selected printing.
   const [capturedPhotoUrl, setCapturedPhotoUrl] = useStateScan(null);
   const [capturedPhotoFile, setCapturedPhotoFile] = useStateScan(null);
+  // Pre-scan TYPE hint — 'auto' | 'card' | 'sealed'. Lets the user tell the
+  // OCR what they're photographing BEFORE shooting, so a sealed product
+  // (booster box/ETB/tin/bundle) doesn't get routed through the individual
+  // card search/pricing pipeline (which returns unrelated card images).
+  const [scanType, setScanType] = useStateScan('auto');
   const fileInputRef = useRefScan(null);
 
   const log = (label, detail, state = 'ok') =>
@@ -43,7 +48,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
     try {
       log('Identifying', backend?.online === false ? 'demo mode' : 'POST /identify');
       const found = identifyCard
-        ? await identifyCard({ query, image })
+        ? await identifyCard({ query, image, productTypeHint: scanType })
         : [];
       if (!found || found.length === 0) {
         log('No matches', 'try a different query', 'miss');
@@ -330,6 +335,26 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
               }}>Find</button>
             )}
           </div>
+        </div>
+
+        {/* Pre-scan TYPE toggle — tells the OCR what's being photographed
+            (individual card vs. sealed booster/box/ETB/tin/bundle) so the
+            result isn't routed through the wrong pricing/image pipeline. */}
+        <div className="row gap-2" style={{ marginTop: 8 }}>
+          {[
+            { id: 'auto',   label: 'Auto' },
+            { id: 'card',   label: 'Card' },
+            { id: 'sealed', label: 'Sealed' },
+          ].map(opt => (
+            <button key={opt.id} className="tap" onClick={() => setScanType(opt.id)} style={{
+              flex: 1, padding: '6px 0', borderRadius: 999,
+              background: scanType === opt.id ? 'var(--accent)' : 'oklch(0 0 0 / 0.5)',
+              color: scanType === opt.id ? 'var(--accent-ink)' : 'oklch(1 0 0 / 0.85)',
+              backdropFilter: 'blur(12px)',
+              fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+              border: '1px solid oklch(1 0 0 / 0.1)',
+            }}>{opt.label}</button>
+          ))}
         </div>
       </div>
 

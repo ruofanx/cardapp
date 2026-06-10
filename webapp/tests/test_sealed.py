@@ -208,3 +208,99 @@ def test_build_identity_validates_product_type():
         pass  # Function is private, tested indirectly
 
 
+def test_identify_card_accepts_product_type_hint():
+    """identify_card takes a product_type_hint kwarg (pre-scan TYPE toggle)."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from ocr_engine import identify_card
+    sig = inspect.signature(identify_card)
+    assert 'product_type_hint' in sig.parameters
+
+
+def test_identify_user_prompt_reflects_hint():
+    """_identify_user_prompt biases the LLM prompt per the pre-scan hint."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+    from ocr_engine import _identify_user_prompt
+    assert 'sealed' in _identify_user_prompt('sealed').lower()
+    assert 'individual card' in _identify_user_prompt('card').lower()
+    assert _identify_user_prompt(None) == "Identify this card."
+
+
+# ---- /api/identify photo path: sealed-product routing ----
+
+from fastapi.testclient import TestClient
+import app as app_module
+import ocr_engine as ocr_engine_module
+from ocr_engine import IdentifyResult
+from pricing_engine import CardIdentity
+
+
+def _fake_identify_result(product_type, name="Mega Evolution Elite Trainer Box"):
+    identity = CardIdentity(name=name, set_name="Mega Evolution", card_number="", language="english", variant=None)
+    return IdentifyResult(identity=identity, confidence=0.9, source="llm", phash="testhash", product_type=product_type)
+
+
+def test_identify_photo_sealed_product_skips_card_lookups(monkeypatch):
+    """A sealed-product OCR result must not fall through to the individual
+    card lookups (Pokemon TCG / TCGdex / eBay Browse) — those return
+    unrelated single-card images/prices for a box/ETB name."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(ocr_engine_module, "identify_card",
+                         lambda path, product_type_hint=None: _fake_identify_result("etb"))
+
+    def boom(*a, **k):
+        raise AssertionError("individual-card lookup should be skipped for sealed products")
+    monkeypatch.setattr(app_module.card_lookup, "lookup_card", boom)
+    monkeypatch.setattr(app_module.card_lookup, "search_cards", boom)
+
+    async def fake_sealed_price(req):
+        assert req.product_type == "etb"
+        return {"estimated_price": 54.99, "source": "ebay_sealed", "image_url": None}
+    monkeypatch.setattr(app_module, "_refresh_sealed_price", fake_sealed_price)
+
+    client = TestClient(app_module.app)
+    res = client.post("/api/identify", files={"photo": ("box.jpg", b"fake", "image/jpeg")})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["product_type"] == "etb"
+    assert data["image_url"] is None
+    assert data["market_price"] == 54.99
+
+
+def test_identify_photo_card_hint_forces_card_routing(monkeypatch):
+    """The 'Card' pre-scan hint forces individual-card routing even if OCR
+    (mis)classifies the photo as a sealed product."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    captured = {}
+
+    def fake_identify_card(path, product_type_hint=None):
+        captured['hint'] = product_type_hint
+        return _fake_identify_result("etb", name="Charizard ex")
+    monkeypatch.setattr(ocr_engine_module, "identify_card", fake_identify_card)
+
+    async def fake_lookup_card(**kw):
+        return None
+    async def fake_search_cards(*a, **k):
+        return []
+    monkeypatch.setattr(app_module.card_lookup, "lookup_card", fake_lookup_card)
+    monkeypatch.setattr(app_module.card_lookup, "search_cards", fake_search_cards)
+
+    import ebay_browse_api
+    async def fake_search_items(*a, **k):
+        return []
+    monkeypatch.setattr(ebay_browse_api, "search_items", fake_search_items)
+
+    def fail_sealed_price(*a, **k):
+        raise AssertionError("sealed price lookup should not run when hint forces 'card'")
+    monkeypatch.setattr(app_module, "_refresh_sealed_price", fail_sealed_price)
+
+    client = TestClient(app_module.app)
+    res = client.post("/api/identify", files={"photo": ("card.jpg", b"fake", "image/jpeg")},
+                       data={"product_type_hint": "card"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["product_type"] == "card"
+    assert captured['hint'] == "card"
+
+

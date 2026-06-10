@@ -1270,6 +1270,7 @@ async def _identify_inner(request: Request):
     content_type = request.headers.get("content-type", "").lower()
     photo: Optional[UploadFile] = None
     query: Optional[str] = None
+    product_type_hint: Optional[str] = None
 
     if ("multipart/form-data" in content_type
             or "application/x-www-form-urlencoded" in content_type):
@@ -1285,6 +1286,12 @@ async def _identify_inner(request: Request):
         q_val = form.get("query") or form.get("q") or form.get("text")
         if isinstance(q_val, str) and q_val.strip():
             query = q_val.strip()
+        # Pre-scan TYPE toggle on the Scan screen — "card" or "sealed". Biases
+        # the OCR prompt and (for "card") forces the response's product_type,
+        # so the user's explicit choice wins over an LLM misclassification.
+        hint_val = form.get("product_type_hint")
+        if isinstance(hint_val, str) and hint_val.strip().lower() in ("card", "sealed"):
+            product_type_hint = hint_val.strip().lower()
     elif "application/json" in content_type or content_type == "":
         try:
             body = await request.json()
@@ -1375,7 +1382,7 @@ async def _identify_inner(request: Request):
     tmp_path.write_bytes(body)
 
     try:
-        result = ocr_engine.identify_card(str(tmp_path))
+        result = ocr_engine.identify_card(str(tmp_path), product_type_hint=product_type_hint)
     except Exception as e:
         log.exception("OCR identify_card failed for %s", tmp_path)
         raise HTTPException(
@@ -1392,106 +1399,148 @@ async def _identify_inner(request: Request):
             "lighting / focus on the card title.",
         )
 
-    # Look up market price + image AND the candidate list (frontend renders
-    # the matches sheet from `candidates`). Build a text query from the
-    # OCR'd identity and run search_cards — that returns the proper shape
-    # with variant explosion + live_prices instead of just one fuzzy hit.
+    # The pre-scan TYPE toggle (Auto/Card/Sealed) is a stronger signal than
+    # the LLM's own guess: "Card" means run it through the normal individual
+    # card pipeline below no matter what OCR thought it saw. "Sealed" / "Auto"
+    # defer to OCR's product_type (already biased by the hint inside the LLM
+    # prompt — see ocr_engine._identify_user_prompt).
+    effective_product_type = result.product_type
+    if product_type_hint == "card":
+        effective_product_type = "card"
+
     market_price: Optional[float] = None
     image_url: Optional[str] = None
     candidates: list[dict] = []
     import time as _t
     _t0 = _t.time()
 
-    # The OCR engine gave us STRUCTURED fields (name, set, number, variant,
-    # language) — use lookup_card directly. It handles number normalization,
-    # variant-aware scoring, JP→EN fallback, and apostrophe escaping. This
-    # is more accurate than jamming everything into a free-text search_cards
-    # query (which mishandles bare 2-3 digit numbers like "27").
-    try:
-        hit = await card_lookup.lookup_card(
-            name=result.identity.name,
-            set_name=result.identity.set_name,
-            card_number=result.identity.card_number,
-            language=result.identity.language,
-            variant=result.identity.variant,
-        )
-        if hit:
-            candidates = [hit.to_dict()]
-            market_price = hit.market_price
-            image_url = hit.image_url
-            log.info("/api/identify photo-path structured hit: %s in %.2fs",
-                     hit.tcg_id, _t.time() - _t0)
-    except Exception as e:
-        log.warning("photo-path structured lookup failed: %s", e)
+    if effective_product_type != "card":
+        # Sealed products (booster boxes, ETBs, tins, bundles) aren't in the
+        # individual-card catalogues queried below — Pokemon TCG API,
+        # TCGdex, and eBay Browse only index single cards. Searching them
+        # with a box/ETB name returns unrelated single-card matches (and
+        # photos, e.g. a graded slab) that would otherwise become this
+        # product's image_url/market_price. Build the candidate straight
+        # from the OCR identity and leave image_url unset — the frontend
+        # falls back to the user's own scan photo, which is the correct
+        # "this is YOUR box" image anyway.
+        candidates = [{
+            "name": result.identity.name,
+            "set_name": result.identity.set_name,
+            "card_number": result.identity.card_number,
+            "image_url": None,
+            "image_url_large": None,
+            "rarity": None,
+            "market_price": None,
+            "tcg_id": None,
+            "language": result.identity.language or "english",
+            "variant": result.identity.variant,
+            "product_type": effective_product_type,
+        }]
+        try:
+            sealed_price = await _refresh_sealed_price(RefreshPriceRequest(
+                name=result.identity.name,
+                set_name=result.identity.set_name,
+                language=result.identity.language or "english",
+                product_type=effective_product_type,
+            ))
+            market_price = sealed_price.get("estimated_price")
+            candidates[0]["market_price"] = market_price
+        except Exception as e:
+            log.warning("sealed price lookup failed: %s", e)
+        log.info("/api/identify photo-path sealed product: %r (%s) in %.2fs",
+                 result.identity.name, effective_product_type, _t.time() - _t0)
+    else:
+        # The OCR engine gave us STRUCTURED fields (name, set, number, variant,
+        # language) — use lookup_card directly. It handles number normalization,
+        # variant-aware scoring, JP→EN fallback, and apostrophe escaping. This
+        # is more accurate than jamming everything into a free-text search_cards
+        # query (which mishandles bare 2-3 digit numbers like "27").
+        try:
+            hit = await card_lookup.lookup_card(
+                name=result.identity.name,
+                set_name=result.identity.set_name,
+                card_number=result.identity.card_number,
+                language=result.identity.language,
+                variant=result.identity.variant,
+            )
+            if hit:
+                candidates = [hit.to_dict()]
+                market_price = hit.market_price
+                image_url = hit.image_url
+                log.info("/api/identify photo-path structured hit: %s in %.2fs",
+                         hit.tcg_id, _t.time() - _t0)
+        except Exception as e:
+            log.warning("photo-path structured lookup failed: %s", e)
 
-    # ALWAYS augment with a broad name search so the user sees more than
-    # one card to choose from. If lookup_card found a structured hit
-    # (high-confidence single match), keep it first; append the broad
-    # results dedupe'd. If lookup_card found nothing, the broad search is
-    # the only source — catches uncataloged sets like First Partner
-    # Bulbasaur Collection by surfacing every Bulbasaur the catalog knows.
-    try:
-        broad = await card_lookup.search_cards(
-            result.identity.name, limit=10, attach_live_prices=False,
-        )
-        seen_ids = {c.get("tcg_id") for c in candidates if c.get("tcg_id")}
-        for r in broad:
-            d = r.to_dict()
-            if d.get("tcg_id") and d.get("tcg_id") in seen_ids:
-                continue
-            candidates.append(d)
-            seen_ids.add(d.get("tcg_id"))
-        if not market_price and broad:
-            market_price = broad[0].market_price
-        if not image_url and broad:
-            image_url = broad[0].image_url
-    except Exception as e:
-        log.warning("photo-path broad search failed: %s", e)
+        # ALWAYS augment with a broad name search so the user sees more than
+        # one card to choose from. If lookup_card found a structured hit
+        # (high-confidence single match), keep it first; append the broad
+        # results dedupe'd. If lookup_card found nothing, the broad search is
+        # the only source — catches uncataloged sets like First Partner
+        # Bulbasaur Collection by surfacing every Bulbasaur the catalog knows.
+        try:
+            broad = await card_lookup.search_cards(
+                result.identity.name, limit=10, attach_live_prices=False,
+            )
+            seen_ids = {c.get("tcg_id") for c in candidates if c.get("tcg_id")}
+            for r in broad:
+                d = r.to_dict()
+                if d.get("tcg_id") and d.get("tcg_id") in seen_ids:
+                    continue
+                candidates.append(d)
+                seen_ids.add(d.get("tcg_id"))
+            if not market_price and broad:
+                market_price = broad[0].market_price
+            if not image_url and broad:
+                image_url = broad[0].image_url
+        except Exception as e:
+            log.warning("photo-path broad search failed: %s", e)
 
-    # ALSO append eBay Browse API matches. This is the catch-all for cards
-    # neither Pokemon TCG API nor TCGdex has indexed (Pokemon Center
-    # promos, First Partner Illustration Collection, regional exclusives,
-    # stamped reprints). Each item becomes a candidate the user can pick.
-    try:
-        import ebay_browse_api
-        parts = [result.identity.name]
-        if result.identity.set_name:
-            parts.append(result.identity.set_name)
-        if result.identity.card_number:
-            parts.append(str(result.identity.card_number))
-        ebay_q = " ".join(p for p in parts if p)
-        ebay_items = await ebay_browse_api.search_items(ebay_q, limit=8)
-        for it in ebay_items:
-            candidates.append({
-                "name": result.identity.name,
-                "set_name": None,
-                "card_number": None,
-                "image_url": it.image_url,
-                "image_url_large": it.image_url_large,
-                "rarity": result.identity.variant or "Promo",
-                "market_price": it.price_usd,
-                "tcg_id": f"ebay-{it.item_id}",
-                "language": result.identity.language or "english",
-                "source": "ebay-browse",
-                "variant": result.identity.variant,
-                "ebay_title": it.title,
-                "ebay_condition": it.condition,
-                "ebay_url": it.item_url,
-            })
-        if not image_url and ebay_items:
-            image_url = ebay_items[0].image_url
-        if not market_price and ebay_items:
-            market_price = ebay_items[0].price_usd
-    except Exception as e:
-        log.warning("eBay Browse augment failed: %s", e)
+        # ALSO append eBay Browse API matches. This is the catch-all for cards
+        # neither Pokemon TCG API nor TCGdex has indexed (Pokemon Center
+        # promos, First Partner Illustration Collection, regional exclusives,
+        # stamped reprints). Each item becomes a candidate the user can pick.
+        try:
+            import ebay_browse_api
+            parts = [result.identity.name]
+            if result.identity.set_name:
+                parts.append(result.identity.set_name)
+            if result.identity.card_number:
+                parts.append(str(result.identity.card_number))
+            ebay_q = " ".join(p for p in parts if p)
+            ebay_items = await ebay_browse_api.search_items(ebay_q, limit=8)
+            for it in ebay_items:
+                candidates.append({
+                    "name": result.identity.name,
+                    "set_name": None,
+                    "card_number": None,
+                    "image_url": it.image_url,
+                    "image_url_large": it.image_url_large,
+                    "rarity": result.identity.variant or "Promo",
+                    "market_price": it.price_usd,
+                    "tcg_id": f"ebay-{it.item_id}",
+                    "language": result.identity.language or "english",
+                    "source": "ebay-browse",
+                    "variant": result.identity.variant,
+                    "ebay_title": it.title,
+                    "ebay_condition": it.condition,
+                    "ebay_url": it.item_url,
+                })
+            if not image_url and ebay_items:
+                image_url = ebay_items[0].image_url
+            if not market_price and ebay_items:
+                market_price = ebay_items[0].price_usd
+        except Exception as e:
+            log.warning("eBay Browse augment failed: %s", e)
 
-    log.info("/api/identify photo-path: %d total candidates "
-             "(structured + broad + eBay) in %.2fs",
-             len(candidates), _t.time() - _t0)
+        log.info("/api/identify photo-path: %d total candidates "
+                 "(structured + broad + eBay) in %.2fs",
+                 len(candidates), _t.time() - _t0)
 
     return {
         "mode": "photo_ocr",
-        "product_type": result.product_type,
+        "product_type": effective_product_type,
         "identity": {
             "name": result.identity.name,
             "set_name": result.identity.set_name,
