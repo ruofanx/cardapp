@@ -56,11 +56,18 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
       // Widen the candidate set across BOTH Pokemon TCG API and TCGdex
       // (EN + JA). TCGdex covers promos and Japanese sets that Pokemon TCG
       // API doesn't have. We run the queries in parallel, then de-dupe.
+      // Skip entirely for sealed products — those APIs only return individual
+      // cards, so widening a "Booster Box"/"ETB" name just floods the results
+      // with unrelated single-card matches (e.g. "Mega" matching every "Mega
+      // ___ ex" card).
       const seedName = (found[0]?.name || query || '').trim();
       const widened = [...found];
       const seen = new Set(found.map(c => c.id));
+      const seedIsSealed = window.api?.isSealedProduct?.(found[0]);
 
-      if (seedName && window.api) {
+      if (seedIsSealed) {
+        log('Widening skipped', 'sealed product — card search not applicable');
+      } else if (seedName && window.api) {
         log('Widening search', `"${seedName.slice(0, 24)}"`);
 
         // Translate the Pokemon name to JA + ZH so we can query TCGdex's
@@ -491,6 +498,10 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const [setFilter, setSetFilter] = useStateScan('');
   const [rarityFilter, setRarityFilter] = useStateScan('');
   const [langFilter, setLangFilter] = useStateScan('');
+  // Default TYPE filter to whatever the top match is, so a sealed-product
+  // scan opens straight onto sealed results (and vice versa for cards).
+  const [typeFilter, setTypeFilter] = useStateScan(() =>
+    window.api?.isSealedProduct?.(candidates[0]) ? 'sealed' : 'card');
   // --- Edit-details state for the selected candidate ---
   const [condition, setCondition] = useStateScan('NM');
   const [lang, setLang]           = useStateScan('EN');
@@ -509,8 +520,18 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
   const setOptions    = uniq(candidates.map(c => c.set));
   const rarityOptions = uniq(candidates.map(c => c.variant || c._rarity));
+  // Only offer the TYPE toggle when the candidate set actually mixes
+  // individual cards and sealed products — otherwise it'd be a no-op chip.
+  const hasCardCandidates   = candidates.some(c => !window.api?.isSealedProduct?.(c));
+  const hasSealedCandidates = candidates.some(c => window.api?.isSealedProduct?.(c));
+  const showTypeFilter = hasCardCandidates && hasSealedCandidates;
 
   const filtered = candidates.filter(c => {
+    if (showTypeFilter) {
+      const sealed = window.api?.isSealedProduct?.(c);
+      if (typeFilter === 'card'   && sealed)  return false;
+      if (typeFilter === 'sealed' && !sealed) return false;
+    }
     if (setFilter    && c.set                  !== setFilter)    return false;
     if (rarityFilter && (c.variant || c._rarity) !== rarityFilter) return false;
     if (langFilter   && (c.lang || 'EN')         !== langFilter)   return false;
@@ -587,6 +608,18 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
 
         {/* Filter chips */}
         <div className="col gap-2" style={{ marginBottom: 10 }}>
+          {/* TYPE row — only shown when results mix cards and sealed products */}
+          {showTypeFilter && (
+            <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>TYPE</div>
+              <Chip active={typeFilter === 'card'} onClick={() => setTypeFilter('card')}>
+                Cards · {candidates.filter(c => !window.api?.isSealedProduct?.(c)).length}
+              </Chip>
+              <Chip active={typeFilter === 'sealed'} onClick={() => setTypeFilter('sealed')}>
+                Sealed · {candidates.filter(c => window.api?.isSealedProduct?.(c)).length}
+              </Chip>
+            </div>
+          )}
           {/* LANG row — always shown so user can switch between EN/JP/CH */}
           <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
             <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>LANG</div>
