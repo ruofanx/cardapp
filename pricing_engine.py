@@ -185,6 +185,45 @@ def is_relevant_sealed_title(title: str, query: SealedProductQuery) -> bool:
     return True
 
 
+# Common boilerplate words that show up in sealed-product listing titles but
+# don't identify the product — ignored when scoring how closely a title
+# matches the requested set/product.
+_SEALED_TITLE_NOISE_WORDS = {
+    "pokemon", "pokémon", "tcg", "sealed", "new", "brand", "factory",
+    "the", "and", "card", "cards", "trading", "game", "presale",
+}
+
+
+def sealed_title_extra_word_count(title: str, query: SealedProductQuery) -> int:
+    """Count title words that aren't part of the requested set/product name.
+
+    Many "Mega Evolution"-series sub-expansions ("Mega Evolution: Chaos
+    Rising", "Mega Evolution—Phantasmal Flames", ...) all mention the series
+    name "Mega Evolution" and "Elite Trainer Box", so they pass
+    `is_relevant_sealed_title` even when the user's product is the base
+    "Mega Evolution" set with no sub-expansion subtitle. Titles for the
+    sub-expansions have extra words ("chaos", "rising", "phantasmal",
+    "flames", ...) that a title for the requested (sub-expansion-less)
+    product wouldn't have.
+
+    Used to rank candidates: lower = closer match to what was requested.
+    """
+    expected_text = " ".join(p for p in [
+        query.set_name or query.name,
+        PRODUCT_TYPE_SEARCH_TERMS.get(query.product_type, ""),
+    ] if p)
+    expected_tokens = [w for w in re.findall(r"\w+", expected_text.lower()) if len(w) >= 3]
+
+    extra = 0
+    for tok in re.findall(r"\w+", title.lower()):
+        if len(tok) < 3 or tok in _SEALED_TITLE_NOISE_WORDS:
+            continue
+        if any(tok in exp or exp in tok for exp in expected_tokens):
+            continue
+        extra += 1
+    return extra
+
+
 class Fetcher(ABC):
     source_name: str
 

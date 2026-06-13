@@ -26,11 +26,22 @@ import asyncio
 import base64
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import httpx
+
+# Reuse the sealed-product query types/filters from the main engine.
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from pricing_engine import (
+    SealedProductQuery,
+    PRODUCT_TYPE_SEARCH_TERMS,
+    is_relevant_sealed_title,
+    sealed_title_extra_word_count,
+)
 
 log = logging.getLogger(__name__)
 
@@ -386,3 +397,48 @@ async def search_items(
     log.info("eBay Browse: q=%r → %d items (total=%s)",
              query, len(items), payload.get("total"))
     return items
+
+
+# ---------------------------------------------------------------------------
+# Sealed product images
+# ---------------------------------------------------------------------------
+
+async def lookup_sealed_image(
+    name: str,
+    set_name: str,
+    product_type: str,
+    language: str = "english",
+) -> Optional[EbayItem]:
+    """Find a representative product photo for a sealed item.
+
+    Sealed products (booster boxes, ETBs, tins, bundles...) aren't in the
+    individual-card catalogues (Pokemon TCG API / TCGdex), so they have no
+    `image_url` from those sources. Unlike single cards — where the same
+    name can map to different printings with different artwork, so a
+    name-only match's image can't be trusted — every copy of e.g. "Mega
+    Evolution Elite Trainer Box" is identical factory-sealed retail
+    packaging. Any matching active eBay listing's photo IS this product's
+    image, so we search active listings instead of the card catalogues.
+
+    Among relevant listings, prefers the one whose title most closely
+    matches the requested product (fewest extra words) — see
+    `pricing_engine.sealed_title_extra_word_count` for why this matters
+    when a series (e.g. "Mega Evolution") has multiple sub-expansion ETBs.
+
+    Returns None if no relevant listing with an image is found.
+    """
+    product_term = PRODUCT_TYPE_SEARCH_TERMS.get(product_type, "")
+    parts = [set_name or name]
+    if product_term:
+        parts.append(product_term)
+    if language.lower() == "japanese":
+        parts.append("Japanese")
+    query = " ".join(p for p in parts if p)
+
+    items = await search_items(query, limit=10, category_id=None)
+    sq = SealedProductQuery(name=name, set_name=set_name or name,
+                             product_type=product_type, language=language)
+    relevant = [it for it in items if it.image_url and is_relevant_sealed_title(it.title, sq)]
+    if not relevant:
+        return None
+    return min(relevant, key=lambda it: sealed_title_extra_word_count(it.title, sq))

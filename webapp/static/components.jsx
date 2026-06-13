@@ -154,6 +154,12 @@ function Sparkline({ data, w = 80, h = 24, color = 'currentColor', fill = false,
 // ============================================================================
 // renderMode: "placeholder" (striped + label), "stylized" (foil-sheen tile), "photo" (user-photo placeholder), "mix" (decides per card)
 function CardArt({ card, renderMode = 'mix', size = 'md', flat = false }) {
+  // User-captured photo, used as a fallback when there's no catalogue image
+  // (e.g. sealed products — boxes/ETBs aren't in the card catalogues, so
+  // image_url is always null for them; the user's own scan photo is the
+  // only "image" of that product that exists).
+  const userPhotos = useUserPhotos(card.id);
+
   // Decide effective mode for "mix"
   const effective = renderMode === 'mix'
     ? (card.id?.startsWith('scan-') ? 'photo' : (card.holo ? 'stylized' : 'placeholder'))
@@ -191,6 +197,19 @@ function CardArt({ card, renderMode = 'mix', size = 'md', flat = false }) {
           loading="lazy"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
           onError={(e) => { e.currentTarget.style.display = 'none'; }}
+        />
+      </div>
+    );
+  }
+
+  if (userPhotos.length > 0) {
+    return (
+      <div className="card-art card-art-image" style={baseStyle}>
+        <img
+          src={userPhotos[userPhotos.length - 1].url}
+          alt={card.name || 'card'}
+          loading="lazy"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
         />
       </div>
     );

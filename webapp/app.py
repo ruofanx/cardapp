@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 import os
+import re
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -635,10 +636,134 @@ def _pick_multiplier(grade_company: str, grade: float,
     return GRADED_MULTIPLIERS.get(key)
 
 
+# Recognized sealed-product type phrases in free-text search queries,
+# checked in order (longer/more-specific patterns first). The matched
+# portion is stripped from the query to derive the product's name/set —
+# e.g. "chaos rising etb" -> name "Chaos Rising", product_type "etb".
+_SEALED_PRODUCT_TYPE_PATTERNS: list[tuple[str, str]] = [
+    (r"\belite trainer box(es)?\b", "etb"),
+    (r"\betbs?\b", "etb"),
+    (r"\bbooster box(es)?\b", "booster_box"),
+    (r"\bbooster pack(s)?\b", "booster_pack"),
+    (r"\btins?\b", "tin"),
+    (r"\bbundles?\b", "bundle"),
+]
+
+
+def _parse_sealed_text_query(query: str) -> tuple[str, str, str]:
+    """Parse a free-text sealed-product search into (name, set_name, product_type).
+
+    The Scan screen's search bar has a SEALED toggle for typing a product
+    name directly (no photo) — e.g. "chaos rising etb" or "151 booster box".
+    Strips the recognized product-type phrase to get the set/product name;
+    defaults to "etb" (the most commonly individually-tracked sealed item)
+    when no type phrase is present.
+    """
+    text = query.strip()
+    product_type = "etb"
+    for pattern, ptype in _SEALED_PRODUCT_TYPE_PATTERNS:
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            product_type = ptype
+            text = (text[:m.start()] + text[m.end():]).strip()
+            break
+    name = " ".join(w.capitalize() for w in text.split()) or query.strip()
+    return name, name, product_type
+
+
+async def _identify_text_sealed(query: str) -> dict:
+    """Text-search path for the Scan screen's SEALED toggle.
+
+    Sealed products (booster boxes, ETBs, tins, bundles) aren't in the
+    single-card catalogues `card_lookup.search_cards` queries, so a typed
+    name like "chaos rising etb" can't go through that path. Parse the
+    query into a product name + type, then reuse `_refresh_sealed_price`
+    (eBay active-listing price + image — see `lookup_sealed_image`) to
+    build a single candidate, same as the photo-identify sealed branch.
+    """
+    import time as _t
+    _t0 = _t.time()
+    name, set_name, product_type = _parse_sealed_text_query(query)
+    candidate = {
+        "name": name,
+        "set_name": set_name,
+        "card_number": "",
+        "image_url": None,
+        "image_url_large": None,
+        "rarity": None,
+        "market_price": None,
+        "tcg_id": None,
+        "language": "english",
+        "variant": None,
+        "product_type": product_type,
+    }
+    try:
+        sealed_price = await _refresh_sealed_price(RefreshPriceRequest(
+            name=name, set_name=set_name, language="english", product_type=product_type,
+        ))
+        candidate["market_price"] = sealed_price.get("estimated_price")
+        candidate["image_url"] = sealed_price.get("image_url")
+        candidate["image_url_large"] = sealed_price.get("image_url_large")
+    except Exception as e:
+        log.warning("sealed text-search price lookup failed: %s", e)
+    log.info("/api/identify text-path sealed q=%r -> %r (%s) in %.2fs",
+             query, name, product_type, _t.time() - _t0)
+    return {
+        "mode": "text_search_sealed",
+        "query": query,
+        "product_type": product_type,
+        "identity": {
+            "name": candidate["name"],
+            "set_name": candidate["set_name"],
+            "card_number": "",
+            "language": "english",
+            "variant": None,
+        },
+        "market_price": candidate["market_price"],
+        "image_url": candidate["image_url"],
+        "candidates": [candidate],
+        "candidate_count": 1,
+    }
+
+
 async def _refresh_sealed_price(req: RefreshPriceRequest) -> dict:
-    """Price lookup for sealed products: eBay first, PriceCharting fallback."""
+    """Price + image lookup for sealed products.
+
+    Price: eBay sold-listing mean first, PriceCharting fallback.
+    Image: PriceCharting's product-cover art (official Pokemon TCG box
+    art, see pricecharting_lookup.lookup_sealed_price) is preferred —
+    it's higher quality than eBay's active-listing seller photos. eBay's
+    image is used only when PriceCharting has no cover image for this
+    product (see ebay_browse_api.lookup_sealed_image for why any matching
+    listing's photo is a true picture of "this product").
+    """
     from ebay_lookup import lookup_sealed_recent_n_mean
     from pricecharting_lookup import lookup_sealed_price
+    import ebay_browse_api
+
+    pc = await lookup_sealed_price(
+        name=req.name,
+        set_name=req.set_name or "",
+        product_type=req.product_type,
+        language=req.language or "english",
+    )
+
+    image_url: Optional[str] = pc.image_url if pc else None
+    image_url_large: Optional[str] = pc.image_url_large if pc else None
+
+    if not image_url:
+        try:
+            img = await ebay_browse_api.lookup_sealed_image(
+                name=req.name,
+                set_name=req.set_name or "",
+                product_type=req.product_type,
+                language=req.language or "english",
+            )
+            if img:
+                image_url = img.image_url
+                image_url_large = img.image_url_large
+        except Exception as e:
+            log.warning("eBay sealed image lookup failed: %s", e)
 
     ebay = await lookup_sealed_recent_n_mean(
         name=req.name,
@@ -652,23 +777,24 @@ async def _refresh_sealed_price(req: RefreshPriceRequest) -> dict:
         return {
             "estimated_price": ebay.mean_usd,
             "source": "ebay_sealed",
-            "image_url": None,
+            "image_url": image_url,
+            "image_url_large": image_url_large,
         }
 
-    pc = await lookup_sealed_price(
-        name=req.name,
-        set_name=req.set_name or "",
-        product_type=req.product_type,
-        language=req.language or "english",
-    )
-    if pc and pc.ungraded_usd:
+    if pc and pc.price_usd:
         return {
-            "estimated_price": pc.ungraded_usd,
+            "estimated_price": pc.price_usd,
             "source": "pricecharting_sealed",
-            "image_url": None,
+            "image_url": image_url,
+            "image_url_large": image_url_large,
         }
 
-    return {"estimated_price": None, "source": "not_found", "image_url": None}
+    return {
+        "estimated_price": None,
+        "source": "not_found",
+        "image_url": image_url,
+        "image_url_large": image_url_large,
+    }
 
 
 @app.post("/api/refresh-price")
@@ -969,6 +1095,18 @@ async def cards_search(q: str, limit: int = 20):
     if len(q.strip()) < 2:
         return {"results": []}
     results = await card_lookup.search_cards(q, limit=limit)
+    return {"results": [r.to_dict() for r in results]}
+
+
+@app.get("/api/pricecharting/search")
+async def pricecharting_search(q: str, limit: int = 10):
+    """Last-resort card-identity search — PriceCharting indexes some
+    Chinese-exclusive sets (e.g. "Pokemon Chinese CSV4C") that TCGdex has
+    registered as a set but never populated with card data. Scan falls back
+    here only after Pokemon TCG API and TCGdex both return nothing."""
+    if len(q.strip()) < 2:
+        return {"results": []}
+    results = await pricecharting_lookup.search_products(q, limit=limit)
     return {"results": [r.to_dict() for r in results]}
 
 
@@ -1301,6 +1439,9 @@ async def _identify_inner(request: Request):
             q_val = body.get("query") or body.get("q") or body.get("text")
             if isinstance(q_val, str) and q_val.strip():
                 query = q_val.strip()
+            hint_val = body.get("product_type_hint")
+            if isinstance(hint_val, str) and hint_val.strip().lower() in ("card", "sealed"):
+                product_type_hint = hint_val.strip().lower()
     else:
         raise HTTPException(400, f"unsupported content-type: {content_type!r}")
 
@@ -1309,6 +1450,13 @@ async def _identify_inner(request: Request):
     # photo AND the typed query when the user presses Find. The query
     # is what they actually want — ignore the photo in that case.
     if query:
+        # SEALED toggle on a typed query — sealed products (booster boxes,
+        # ETBs, tins, bundles) aren't in the single-card catalogues
+        # `card_lookup.search_cards` searches below, so route to the
+        # eBay-backed sealed lookup instead (see _identify_text_sealed).
+        if product_type_hint == "sealed":
+            return await _identify_text_sealed(query)
+
         import time as _t
         _t0 = _t.time()
         try:
@@ -1416,14 +1564,14 @@ async def _identify_inner(request: Request):
 
     if effective_product_type != "card":
         # Sealed products (booster boxes, ETBs, tins, bundles) aren't in the
-        # individual-card catalogues queried below — Pokemon TCG API,
-        # TCGdex, and eBay Browse only index single cards. Searching them
-        # with a box/ETB name returns unrelated single-card matches (and
-        # photos, e.g. a graded slab) that would otherwise become this
-        # product's image_url/market_price. Build the candidate straight
-        # from the OCR identity and leave image_url unset — the frontend
-        # falls back to the user's own scan photo, which is the correct
-        # "this is YOUR box" image anyway.
+        # individual-card catalogues queried below — Pokemon TCG API and
+        # TCGdex only index single cards, and a name-only search there
+        # would return unrelated single-card art. Build the candidate
+        # straight from the OCR identity; _refresh_sealed_price fills in
+        # market_price AND image_url (via eBay active-listing photos —
+        # see ebay_browse_api.lookup_sealed_image for why that's safe for
+        # sealed products specifically). If that comes back empty, the
+        # frontend falls back to the user's own scan photo.
         candidates = [{
             "name": result.identity.name,
             "set_name": result.identity.set_name,
@@ -1446,6 +1594,9 @@ async def _identify_inner(request: Request):
             ))
             market_price = sealed_price.get("estimated_price")
             candidates[0]["market_price"] = market_price
+            image_url = sealed_price.get("image_url")
+            candidates[0]["image_url"] = image_url
+            candidates[0]["image_url_large"] = sealed_price.get("image_url_large")
         except Exception as e:
             log.warning("sealed price lookup failed: %s", e)
         log.info("/api/identify photo-path sealed product: %r (%s) in %.2fs",

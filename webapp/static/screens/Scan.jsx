@@ -47,9 +47,40 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
     log(image ? 'Photo captured' : 'Query submitted', image ? `${(image.size/1024).toFixed(0)} KB` : `"${query.slice(0, 24)}"`);
     try {
       log('Identifying', backend?.online === false ? 'demo mode' : 'POST /identify');
-      const found = identifyCard
+      let found = identifyCard
         ? await identifyCard({ query, image, productTypeHint: scanType })
         : [];
+
+      // The EN-only catalogue search (Pokemon TCG API) returns nothing for
+      // JP/CH card names typed directly off the physical card — those
+      // names don't exist in its English database. Before giving up, try
+      // TCGdex's localized databases directly with the raw query text (no
+      // PokeAPI translation needed since the query IS already in that
+      // language). This is the only path that can find e.g. a Chinese-set
+      // card by its printed Chinese name.
+      if ((!found || found.length === 0) && !image && query.trim() && window.api?.searchTCGdex) {
+        log('Widening (TCGdex)', `"${query.slice(0, 24)}" — no catalogue match`);
+        const q = query.trim();
+        const fallbackTasks = [
+          ['TCGdex EN',    window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'en' })],
+          ['TCGdex JA',    window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ja', dbLang: 'ja' })],
+          ['TCGdex ZH-TW', window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-tw' })],
+          ['TCGdex ZH-CN', window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-cn' })],
+        ];
+        const fallbackResults = await Promise.allSettled(fallbackTasks.map(([, p]) => p));
+        const fallbackHits = [];
+        const fallbackSeen = new Set();
+        fallbackResults.forEach((r, i) => {
+          const label = fallbackTasks[i][0];
+          const hits = (r.status === 'fulfilled' && Array.isArray(r.value)) ? r.value : [];
+          log(label, `${hits.length} hit${hits.length === 1 ? '' : 's'}`);
+          for (const h of hits) {
+            if (!fallbackSeen.has(h.id)) { fallbackHits.push(h); fallbackSeen.add(h.id); }
+          }
+        });
+        if (fallbackHits.length > 0) found = fallbackHits;
+      }
+
       if (!found || found.length === 0) {
         log('No matches', 'try a different query', 'miss');
         setError('No candidates returned by /api/identify.');
@@ -91,14 +122,25 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
         if (window.api.searchTCGdex && names?.ja) tasks.push(['TCGdex JA',   window.api.searchTCGdex({ name: names.ja }, { pageSize: 15, lang: 'ja', dbLang: 'ja' })]);
         if (window.api.searchTCGdex && names?.zh) tasks.push(['TCGdex ZH-TW', window.api.searchTCGdex({ name: names.zh }, { pageSize: 15, lang: 'ch', dbLang: 'zh-tw' })]);
         if (window.api.searchTCGdex && names?.zh) tasks.push(['TCGdex ZH-CN', window.api.searchTCGdex({ name: names.zh }, { pageSize: 15, lang: 'ch', dbLang: 'zh-cn' })]);
+        // Final fallback: PriceCharting indexes some Chinese-exclusive sets
+        // (e.g. "Pokemon Chinese CSV4C") that TCGdex has registered but never
+        // populated with card data. Only contributes identities the other
+        // sources missed entirely — see dedup below.
+        if (window.api.searchPriceCharting) tasks.push(['PriceCharting', window.api.searchPriceCharting(seedName, { pageSize: 10 })]);
 
         const results = await Promise.allSettled(tasks.map(([, p]) => p));
+        const cardKey = (c) => `${(c.name || '').toLowerCase().trim()}|${String(c.code || '').trim()}`;
         results.forEach((r, i) => {
           const label = tasks[i][0];
           const hits = (r.status === 'fulfilled' && Array.isArray(r.value)) ? r.value : [];
           log(label, `${hits.length} hit${hits.length === 1 ? '' : 's'}`);
           for (const h of hits) {
-            if (!seen.has(h.id)) { widened.push(h); seen.add(h.id); }
+            if (seen.has(h.id)) continue;
+            // PriceCharting results often duplicate cards already found via
+            // Pokemon TCG API / TCGdex (same name + number, better image &
+            // pricing there) — only add ones that fill a genuine gap.
+            if (label === 'PriceCharting' && widened.some(c => cardKey(c) === cardKey(h))) continue;
+            widened.push(h); seen.add(h.id);
           }
         });
 
@@ -157,12 +199,12 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
         const JP_SET_ALIASES = {
           "terastal festival": "SV8a", "terastal fes": "SV8a",
           "crimson haze": "SV5a",
-          "paradise dragona": "SV8",
-          "stellar miracle": "SV7", "super electric breaker": "SV7a",
+          "paradise dragona": "SV7a",
+          "stellar miracle": "SV7", "super electric breaker": "SV8",
           "shiny treasure": "SV4a",
           "wild force": "SV5K", "cyber judge": "SV5M",
           "mask of change": "SV6",
-          "battle partners": "SV9a",
+          "battle partners": "SV9",
           "151": "SV2a", "pokemon 151": "SV2a",
           "glory of team rocket": "SV10", "rocket gang": "SV10",
         };
@@ -548,6 +590,11 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const [purchasePrice, setPurchasePrice] = useStateScan('');
   // Comma-separated user tags (e.g. "favorite, trade-bait, sleeve").
   const [tagsInput, setTagsInput] = useStateScan('');
+  // Live NM-raw quote — overrides the candidate's `usd` (from TCGdex
+  // Cardmarket EUR for JP/CH, which is often stale/off by 5-10x for newer
+  // JP sets) with the backend's eBay/PriceCharting-backed estimate.
+  const [quotedUSD, setQuotedUSD] = useStateScan(null);
+  const [quoting, setQuoting]     = useStateScan(false);
 
   // Build filter option lists from the candidate set.
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
@@ -588,13 +635,38 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
     setTagsInput('');
   }, [card?.id, card?.lang]);
 
+  // JP/CH candidates' `usd` comes from TCGdex Cardmarket EUR pricing, which
+  // is frequently stale for newer JP sets (often off by 5-10x — see
+  // /api/refresh-price's JP fallback chain). Fetch a live NM-raw quote
+  // (eBay Browse median / PriceCharting JP) to use as the base price instead.
+  React.useEffect(() => {
+    setQuotedUSD(null);
+    if (!card || card.lang === 'EN' || !window.api?.quotePrice) return;
+    let cancelled = false;
+    setQuoting(true);
+    window.api.quotePrice({ ...card, condition: 'NM', is_graded: false, grader: null, grade: null })
+      .then(res => {
+        if (cancelled) return;
+        const p = res?.estimated_price;
+        if (p != null && Number.isFinite(Number(p))) setQuotedUSD(Number(p));
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setQuoting(false); });
+    return () => { cancelled = true; };
+  }, [card?.id]);
+
   const isGraded = grader !== 'Raw';
-  const hasBase  = card?.usd != null && Number.isFinite(Number(card.usd));
-  const baseUSD  = hasBase ? Number(card.usd) : null;
+  const hasBase  = quotedUSD != null || (card?.usd != null && Number.isFinite(Number(card.usd)));
+  const baseUSD  = quotedUSD != null ? quotedUSD : (hasBase ? Number(card.usd) : null);
+  // LANG_MULT projects an EN-priced card onto a JP/CH market estimate — only
+  // meaningful when the base price's language differs from the selected one.
+  // When `lang` matches the candidate's own language, baseUSD is already
+  // priced for that market (skip it to avoid double-discounting).
+  const langMult = (lang === card?.lang) ? 1 : (LANG_MULT[lang] || 1);
   const autoAdj  = hasBase
     ? baseUSD
       * (CONDITION_MULT[isGraded ? 'NM' : condition] || 1)
-      * (LANG_MULT[lang] || 1)
+      * langMult
       * (isGraded ? (GRADE_MULT[grade] || 1) : 1)
     : null;
   // Manual override wins if provided.
@@ -892,8 +964,9 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
             <div className="row" style={{ marginTop: 2, justifyContent: 'space-between', alignItems: 'baseline' }}>
               <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>
                 {useManual ? 'YOUR PRICE' : 'ADJUSTED PRICE'}
+                {quoting && <span style={{ textTransform: 'none', fontWeight: 400 }}> · quoting…</span>}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', opacity: quoting ? 0.6 : 1 }}>
                 <Price usd={adjUSD} currency={cur === 'BOTH' ? 'USD' : cur} size="md"/>
                 {hasBase && !useManual && adjUSD != null && Math.abs(adjUSD - baseUSD) > 0.005 && (
                   <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)', textDecoration: 'line-through' }}>

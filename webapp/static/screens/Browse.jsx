@@ -70,6 +70,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
       (c.set  || '').toLowerCase().includes(query.toLowerCase()) ||
       (c.code || '').toLowerCase().includes(query.toLowerCase())
     );
+    if (filter === 'cards')  list = list.filter(c => !window.api?.isSealedProduct?.(c));
     if (filter === 'foil')   list = list.filter(c => c.holo);
     if (filter === 'jp')     list = list.filter(c => c.lang === 'JP');
     if (filter === 'graded') list = list.filter(c => c.grade);
@@ -142,10 +143,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
       <div className="row" style={{ padding: '0 16px 12px', gap: 6, overflowX: 'auto', scrollbarWidth: 'none' }}>
         {[
           { id: 'all', label: 'All' },
+          { id: 'cards', label: 'Cards' },
+          { id: 'sealed', label: 'Sealed' },
           { id: 'foil', label: 'Foil only' },
           { id: 'jp', label: 'JP' },
           { id: 'graded', label: 'Graded' },
-          { id: 'sealed', label: 'Sealed' },
           { id: 'wishlist', label: 'Wishlist', count: wishlistCount },
         ].map(f => (
           <button key={f.id} className="tap" onClick={() => setFilter(f.id)} style={{

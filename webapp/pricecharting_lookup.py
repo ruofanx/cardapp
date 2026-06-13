@@ -20,6 +20,7 @@ Slug guessing isn't perfect; we try a few variants per lookup.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -89,6 +90,38 @@ _PRICE_ROW_RE = re.compile(
 # far more history than this app has collected on its own (~3 weeks).
 _CHART_DATA_RE = re.compile(r'VGPC\.chart_data\s*=\s*(\{.*?\});', re.DOTALL)
 
+# Every PriceCharting product page also embeds a cover-art image:
+#   <div class="cover"><a href="#"><img src='https://storage.googleapis.com/images.pricecharting.com/{hash}/{size}.jpg' alt="...">
+# This is official Pokemon TCG box art — much higher quality than eBay
+# active-listing seller photos (used as the image source for sealed
+# products). {hash} is stable per product; confirmed available sizes are
+# 240 (thumbnail) and 1600 (full resolution).
+_COVER_IMAGE_RE = re.compile(
+    r'<div class="cover">.*?<img src=[\'"]([^\'"]+?)/\d+\.jpg[\'"]',
+    re.IGNORECASE | re.DOTALL,
+)
+
+# `/search-products?type=prices&q=...` returns a results table — one
+# `<tr id="product-{id}" ...>` per product. Split on that marker so each
+# row can be parsed independently (a row missing a piece, e.g. no price,
+# shouldn't pull fields from its neighbour).
+_SEARCH_ROW_SPLIT_RE = re.compile(r'<tr id="product-(\d+)"')
+_SEARCH_TITLE_RE = re.compile(
+    r'<td class="title">\s*<a href="([^"]+)"[^>]*>\s*([^<]+?)\s*</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+# Same console link appears twice per row (once inside the title cell, once
+# in its own "console" cell) — either match gives the set slug + name.
+_SEARCH_SET_RE = re.compile(
+    r'<a href="/console/([^"]+)">\s*([^<]+?)\s*</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+_SEARCH_PRICE_RE = re.compile(r'<span class="js-price">\$?([\d,.]+)</span>')
+_SEARCH_IMAGE_RE = re.compile(r'<img class="photo"[^>]*\bsrc="([^"]+?)/\d+\.\w+"')
+# "Maushold Ex #158" -> ("Maushold Ex", "158"); titles without a printed
+# number (sealed products) leave card_number as None.
+_TITLE_NUMBER_RE = re.compile(r'^(.*?)\s*#(\S+)$')
+
 
 @dataclass
 class PriceChartingResult:
@@ -97,6 +130,38 @@ class PriceChartingResult:
     price_usd: Optional[float]
     all_prices: dict[str, float]   # full price table, label → USD
     cached: bool
+    image_url: Optional[str] = None        # cover art, 240px
+    image_url_large: Optional[str] = None  # cover art, 1600px
+
+
+@dataclass
+class PriceChartingSearchResult:
+    """One row from `/search-products` — a card-identity fallback for sets
+    TCGdex has registered but never populated (e.g. Chinese-exclusive
+    "CSV4C" / 嘉奖回合)."""
+    product_id: str
+    name: str
+    card_number: Optional[str]
+    set_name: str
+    url: str
+    price_usd: Optional[float]
+    language: str = "english"              # "chinese" | "japanese" | "english"
+    image_url: Optional[str] = None        # cover art, 240px
+    image_url_large: Optional[str] = None  # cover art, 1600px
+
+    def to_dict(self):
+        return {
+            "id": f"pricecharting-{self.product_id}",
+            "name": self.name,
+            "card_number": self.card_number,
+            "set_name": self.set_name,
+            "language": self.language,
+            "market_price": self.price_usd,
+            "image_url": self.image_url_large or self.image_url,
+            "image_url_small": self.image_url,
+            "source": "pricecharting",
+            "pricecharting_url": self.url,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +268,42 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
     return [u for u in urls if not (u in out_seen or out_seen.add(u))]
 
 
+# Sealed products for OLD sets (Base Set, Jungle, Fossil, Team Rocket, ...)
+# are commonly entered with a trailing print-run qualifier in `set_name`,
+# e.g. "Jungle Unlimited" or "Fossil 1st Edition" — but PriceCharting
+# catalogues sealed booster packs/boxes/etc. under the base set name
+# (`pokemon-jungle/booster-pack`, not `pokemon-jungle-unlimited/booster-pack`,
+# which redirects to /search-products). Strip a trailing "Unlimited"/
+# "1st Edition"/"First Edition" qualifier as a fallback candidate.
+_SET_PRINT_RUN_RE = re.compile(
+    r"\s+(?:1st edition|first edition|unlimited)\s*$", re.IGNORECASE,
+)
+
+
+def _sealed_product_urls(name: str, set_name: str, product_type: str,
+                          language: str = "english") -> list[str]:
+    """Generate plausible PriceCharting sealed-product URLs to try in order.
+
+    Tries `set_name` (or `name` if `set_name` is empty) as given first, then
+    with a trailing print-run qualifier stripped (see `_SET_PRINT_RUN_RE`).
+    Returns [] if `product_type` isn't in SEALED_PRODUCT_SLUGS.
+    """
+    product_slug = SEALED_PRODUCT_SLUGS.get(product_type)
+    if product_slug is None:
+        return []
+
+    jp_prefix = "japanese-" if language.lower() == "japanese" else ""
+    raw = (set_name or name or "").strip()
+    candidates = [raw]
+    stripped = _SET_PRINT_RUN_RE.sub("", raw).strip()
+    if stripped and stripped != raw:
+        candidates.append(stripped)
+
+    seen = set()
+    set_slugs = [_slug(c) for c in candidates if c and not (c in seen or seen.add(c))]
+    return [f"{PC_BASE}/game/pokemon-{jp_prefix}{s}/{product_slug}" for s in set_slugs]
+
+
 # ---------------------------------------------------------------------------
 # Cache (SQLite, 24h TTL)
 # ---------------------------------------------------------------------------
@@ -248,6 +349,46 @@ def _cache_set(url: str, prices: dict[str, float]) -> None:
     conn.close()
 
 
+# Separate small cache for sealed-product cover images, keyed by the same
+# product-page URL as `pc_cache`. Kept separate from `prices_json` (typed as
+# dict[str, float] everywhere) so the image base URL — a string — doesn't
+# need to be smuggled into that price table.
+def _init_image_cache() -> None:
+    conn = sqlite3.connect(str(CACHE_DB))
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pc_sealed_image_cache (
+            url        TEXT PRIMARY KEY,
+            image_base TEXT,
+            ts         REAL NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def _image_cache_get(url: str) -> Optional[str]:
+    _init_image_cache()
+    conn = sqlite3.connect(str(CACHE_DB))
+    row = conn.execute(
+        "SELECT image_base, ts FROM pc_sealed_image_cache WHERE url = ?", (url,)
+    ).fetchone()
+    conn.close()
+    if not row or time.time() - row[1] > CACHE_TTL_SECONDS:
+        return None
+    return row[0]
+
+
+def _image_cache_set(url: str, image_base: Optional[str]) -> None:
+    _init_image_cache()
+    conn = sqlite3.connect(str(CACHE_DB))
+    conn.execute(
+        "INSERT OR REPLACE INTO pc_sealed_image_cache (url, image_base, ts) VALUES (?, ?, ?)",
+        (url, image_base, time.time()),
+    )
+    conn.commit()
+    conn.close()
+
+
 # ---------------------------------------------------------------------------
 # HTML parsing
 # ---------------------------------------------------------------------------
@@ -264,6 +405,97 @@ def _parse_price_table(html: str) -> dict[str, float]:
             out[label] = float(value.replace(",", ""))
         except ValueError:
             continue
+    return out
+
+
+def _parse_cover_image_base(html: str) -> Optional[str]:
+    """Extract the product-cover image base URL from a PriceCharting page.
+
+    Returns e.g. 'https://storage.googleapis.com/images.pricecharting.com/{hash}/'
+    (trailing slash) so callers can append '240.jpg' or '1600.jpg'. Returns
+    None if the page has no `<div class="cover">` image (not in catalogue).
+    """
+    m = _COVER_IMAGE_RE.search(html)
+    if not m:
+        return None
+    return m.group(1) + "/"
+
+
+def _cover_image_urls(image_base: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Expand a cover image base URL into (thumbnail, full-size) variants."""
+    if not image_base:
+        return None, None
+    return image_base + "240.jpg", image_base + "1600.jpg"
+
+
+def _parse_chart_series(html: str, series: str = "used") -> Optional[list[tuple[int, float]]]:
+    """Extract one series from a page's embedded `VGPC.chart_data` as
+    [(timestamp_ms, price_usd), ...] sorted ascending. Returns None if
+    chart_data is missing/unparseable or the series has no nonzero points.
+    "used" is the raw/ungraded line — see `_CHART_DATA_RE` for the verified
+    mapping to the "Ungraded"/"Sealed" price-table row.
+    """
+    m = _CHART_DATA_RE.search(html)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    points = data.get(series) or []
+    cleaned = sorted((int(t), v / 100.0) for t, v in points if v)
+    return cleaned or None
+
+
+def _detect_language(set_slug: str) -> str:
+    """PriceCharting consoles encode language in the slug:
+    'pokemon-chinese-csv4c', 'pokemon-japanese-future-flash', 'pokemon-paradox-rift'."""
+    s = set_slug.lower()
+    if "chinese" in s:
+        return "chinese"
+    if "japanese" in s:
+        return "japanese"
+    return "english"
+
+
+def _parse_search_results(html_text: str, limit: int = 10) -> list[PriceChartingSearchResult]:
+    """Parse product rows from a `/search-products?type=prices&q=` page.
+
+    Only Pokemon products (console slug starting with "pokemon") are kept —
+    a free-text card name can match unrelated video games/merch otherwise.
+    """
+    out: list[PriceChartingSearchResult] = []
+    chunks = _SEARCH_ROW_SPLIT_RE.split(html_text)
+    # chunks alternates [pre-text, product_id, row_html, product_id, row_html, ...]
+    for i in range(1, len(chunks) - 1, 2):
+        product_id, row = chunks[i], chunks[i + 1]
+        title_m = _SEARCH_TITLE_RE.search(row)
+        set_m = _SEARCH_SET_RE.search(row)
+        if not title_m or not set_m:
+            continue
+        set_slug, set_name = set_m.group(1), html.unescape(set_m.group(2).strip())
+        if not set_slug.lower().startswith("pokemon"):
+            continue
+
+        url = title_m.group(1)
+        title = html.unescape(title_m.group(2).strip())
+        num_m = _TITLE_NUMBER_RE.match(title)
+        name, card_number = (num_m.group(1).strip(), num_m.group(2)) if num_m else (title, None)
+
+        price_m = _SEARCH_PRICE_RE.search(row)
+        price = float(price_m.group(1).replace(",", "")) if price_m else None
+
+        img_m = _SEARCH_IMAGE_RE.search(row)
+        image_url, image_url_large = _cover_image_urls(img_m.group(1) + "/") if img_m else (None, None)
+
+        out.append(PriceChartingSearchResult(
+            product_id=product_id, name=name, card_number=card_number,
+            set_name=set_name, url=url, price_usd=price,
+            language=_detect_language(set_slug),
+            image_url=image_url, image_url_large=image_url_large,
+        ))
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -324,18 +556,52 @@ async def fetch_chart_history(name: str, set_name: str, card_number: str,
             final_path = str(r.url.path)
             if final_path.startswith("/search-products") or final_path == "/":
                 continue
-            m = _CHART_DATA_RE.search(r.text)
-            if not m:
-                continue
-            try:
-                data = json.loads(m.group(1))
-            except (json.JSONDecodeError, ValueError):
-                continue
-            points = data.get(series) or []
-            cleaned = sorted((int(t), v / 100.0) for t, v in points if v)
+            cleaned = _parse_chart_series(r.text, series)
             if not cleaned:
                 continue
             return cleaned, url
+    return None
+
+
+async def fetch_sealed_chart_history(
+    name: str,
+    set_name: str,
+    product_type: str,
+    language: str = "english",
+    series: str = "used",
+) -> Optional[tuple[list[tuple[int, float]], str]]:
+    """Like `fetch_chart_history`, but for sealed products (booster boxes,
+    ETBs, etc.) — reads the same `VGPC.chart_data["used"]` series from the
+    sealed-product page that `lookup_sealed_price` fetches for pricing.
+
+    Returns None if `product_type` isn't in SEALED_PRODUCT_SLUGS, the
+    product isn't in PriceCharting's catalogue, or chart_data has no
+    nonzero points for `series`.
+    """
+    urls = _sealed_product_urls(name, set_name, product_type, language)
+    if not urls:
+        return None
+
+    async with httpx.AsyncClient(timeout=15.0,
+                                  headers={"User-Agent": USER_AGENT}) as client:
+        for url in urls:
+            try:
+                r = await client.get(url, follow_redirects=True)
+            except httpx.HTTPError as e:
+                log.warning("PriceCharting sealed chart fetch failed %s: %s", url, e)
+                continue
+
+            if r.status_code != 200:
+                continue
+
+            final_path = str(r.url.path)
+            if final_path.startswith("/search-products") or final_path == "/":
+                continue
+
+            cleaned = _parse_chart_series(r.text, series)
+            if cleaned:
+                return cleaned, url
+
     return None
 
 
@@ -436,58 +702,88 @@ async def lookup_sealed_price(
     checks the 24h cache, fetches if needed, and parses the price table.
     Looks for a "Sealed" row first; falls back to "Ungraded" if absent.
 
-    Returns None if `product_type` is not in SEALED_PRODUCT_SLUGS or if the
-    product page isn't in PriceCharting's catalogue.
+    Returns None if `product_type` is not in SEALED_PRODUCT_SLUGS or if none
+    of the candidate product pages are in PriceCharting's catalogue.
     """
-    product_slug = SEALED_PRODUCT_SLUGS.get(product_type)
-    if product_slug is None:
+    urls = _sealed_product_urls(name, set_name, product_type, language)
+    if not urls:
         return None
 
-    jp_prefix = "japanese-" if language.lower() == "japanese" else ""
-    set_slug = _slug(set_name or name)
-    url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{product_slug}"
+    async with httpx.AsyncClient(timeout=15.0,
+                                  headers={"User-Agent": USER_AGENT}) as client:
+        for url in urls:
+            # Cache hit?
+            cached = _cache_get(url)
+            if cached is not None:
+                price_label = "Sealed" if "Sealed" in cached else "Ungraded"
+                image_url, image_url_large = _cover_image_urls(_image_cache_get(url))
+                return PriceChartingResult(
+                    url=url,
+                    grade_label=price_label,
+                    price_usd=cached.get(price_label),
+                    all_prices=cached,
+                    cached=True,
+                    image_url=image_url,
+                    image_url_large=image_url_large,
+                )
 
-    # Cache hit?
-    cached = _cache_get(url)
-    if cached is not None:
-        price_label = "Sealed" if "Sealed" in cached else "Ungraded"
-        return PriceChartingResult(
-            url=url,
-            grade_label=price_label,
-            price_usd=cached.get(price_label),
-            all_prices=cached,
-            cached=True,
-        )
+            # Cache miss — fetch
+            try:
+                r = await client.get(url, follow_redirects=True)
+            except httpx.HTTPError as e:
+                log.warning("PriceCharting sealed fetch failed %s: %s", url, e)
+                continue
 
-    # Cache miss — fetch
+            if r.status_code != 200:
+                log.warning("PriceCharting sealed returned %s for %s", r.status_code, url)
+                continue
+
+            final_path = str(r.url.path)
+            if final_path.startswith("/search-products") or final_path == "/":
+                log.info("PriceCharting sealed redirected %s → %s (not in catalogue)", url, r.url)
+                continue
+
+            prices = _parse_price_table(r.text)
+            if not prices:
+                continue
+
+            _cache_set(url, prices)
+            image_base = _parse_cover_image_base(r.text)
+            _image_cache_set(url, image_base)
+            image_url, image_url_large = _cover_image_urls(image_base)
+
+            price_label = "Sealed" if "Sealed" in prices else "Ungraded"
+            return PriceChartingResult(
+                url=url,
+                grade_label=price_label,
+                price_usd=prices.get(price_label),
+                all_prices=prices,
+                cached=False,
+                image_url=image_url,
+                image_url_large=image_url_large,
+            )
+
+    return None
+
+
+async def search_products(query: str, limit: int = 10) -> list[PriceChartingSearchResult]:
+    """Free-text search of PriceCharting's catalogue — last-resort card
+    identity when neither Pokemon TCG API (EN-only) nor TCGdex (which has
+    REGISTERED but not POPULATED some Chinese-exclusive sets, e.g. CSV4C)
+    can find a match. PriceCharting indexes these sets directly, including
+    a cover-art thumbnail per card.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
     try:
         async with httpx.AsyncClient(timeout=15.0,
                                       headers={"User-Agent": USER_AGENT}) as client:
-            r = await client.get(url, follow_redirects=True)
+            r = await client.get(f"{PC_BASE}/search-products",
+                                  params={"type": "prices", "q": q})
     except httpx.HTTPError as e:
-        log.warning("PriceCharting sealed fetch failed %s: %s", url, e)
-        return None
-
+        log.warning("PriceCharting search failed for %r: %s", q, e)
+        return []
     if r.status_code != 200:
-        log.warning("PriceCharting sealed returned %s for %s", r.status_code, url)
-        return None
-
-    final_path = str(r.url.path)
-    if final_path.startswith("/search-products") or final_path == "/":
-        log.info("PriceCharting sealed redirected %s → %s (not in catalogue)", url, r.url)
-        return None
-
-    prices = _parse_price_table(r.text)
-    if not prices:
-        return None
-
-    _cache_set(url, prices)
-
-    price_label = "Sealed" if "Sealed" in prices else "Ungraded"
-    return PriceChartingResult(
-        url=url,
-        grade_label=price_label,
-        price_usd=prices.get(price_label),
-        all_prices=prices,
-        cached=False,
-    )
+        return []
+    return _parse_search_results(r.text, limit=limit)

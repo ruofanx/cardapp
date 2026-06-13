@@ -42,8 +42,8 @@ SET_NAME_ALIASES = {
     "sv11w white flare":              "SV11W",
     "black bolt":                     "SV11K",
     "sv: black bolt":                 "SV11K",
-    "battle partners":                "SV9a",
-    "sv: battle partners":            "SV9a",
+    "battle partners":                "SV9",
+    "sv: battle partners":            "SV9",
     "terastal festival ex":           "SV8a",
     "sv: terastal festival ex":       "SV8a",
     "shiny treasure ex":              "SV4a",
@@ -55,8 +55,8 @@ SET_NAME_ALIASES = {
     "cyber judge":                    "SV5M",
     "mask of change":                 "SV6",
     "stellar miracle":                "SV7",
-    "super electric breaker":         "SV7a",
-    "paradise dragona":               "SV8",
+    "super electric breaker":         "SV8",
+    "paradise dragona":               "SV7a",
     # SV10 — "Glory of Team Rocket" (the slab label commonly reads
     # "GLORY/RKT. GANG" or "ROCKET GANG" — handle both forms)
     "glory of team rocket":           "SV10",
@@ -69,7 +69,7 @@ SET_NAME_ALIASES = {
     "クリムゾンヘイズ":               "SV5a",
     # Common alt phrasings the LLM emits for already-mapped sets
     "terastal fes ex":                "SV8a",
-    "battle partners ex":             "SV9a",
+    "battle partners ex":             "SV9",
 }
 
 

@@ -958,12 +958,21 @@ def _score_match(card: dict, want_number: Optional[str], want_set: Optional[str]
 
     if want_number and api_number == want_number.lower():
         score += 100
+    number_mismatch = bool(want_number) and api_number != want_number.lower()
     if want_set:
         ws = want_set.lower()
         if api_set == ws:
             score += 50
         elif ws in api_set or api_set in ws:
             score += 20
+            # Loose substring match (e.g. "Black Star Promos" inside
+            # "Scarlet & Violet Black Star Promos") spans 200+ printings
+            # across a decade, all sharing rarity "Promo" — neither signal
+            # pinpoints a specific card. If the number we read off the
+            # photo doesn't match THIS candidate either, don't let the
+            # generic set+variant alignment alone clear MIN_LOOKUP_SCORE.
+            if number_mismatch:
+                score -= 100
 
     # Variant ↔ rarity alignment
     expected = _expected_rarities_for_variant(want_variant)

@@ -43,6 +43,7 @@
     userPortfolio:   (uid) => `/api/users/${uid}/portfolio`,
     userCards:       (uid) => `/api/users/${uid}/cards`,
     cardsSearch:     (q) => `/api/cards/search?q=${encodeURIComponent(q)}`,
+    pricechartingSearch: (q, limit) => `/api/pricecharting/search?q=${encodeURIComponent(q)}&limit=${limit}`,
     card:            (cid) => `/api/cards/${cid}`,
     cardPhoto:       (cid) => `/api/cards/${cid}/photo`,
     cardPriceHistory:(cid) => `/api/cards/${cid}/price-history`,
@@ -173,6 +174,55 @@
     return Math.abs(h) % 360;
   };
 
+  // Distinct-print variant key → display label. Mirrors card_lookup.py's
+  // _VARIANT_KEY_LABELS / _explode_variants — old WotC holos (Base/Jungle/
+  // Fossil/Team Rocket) carry BOTH `1stEditionHolofoil` and
+  // `unlimitedHolofoil` price keys with very different market values; those
+  // are genuinely different physical cards (1st Edition vs Unlimited), not
+  // one card with two prices. searchPokemonTCG used to pick a single price
+  // via fallback chain, producing duplicate-looking candidates with no way
+  // to tell which print was which. Splitting into one row per print (each
+  // labelled and priced correctly) is what lets the trade picker show
+  // "1st Edition Holo · $312" vs "Unlimited Holo · $172" instead of two
+  // identical "Team Rocket" thumbnails.
+  const VARIANT_KEY_LABELS = {
+    '1stEditionHolofoil': '1st Edition Holo',
+    'unlimitedHolofoil':  'Unlimited Holo',
+    '1stEditionNormal':   '1st Edition',
+    '1stEdition':         '1st Edition',
+    'unlimited':          'Unlimited',
+    'reverseHolofoil':    'Reverse Holo',
+    'holofoil':           'Holo',
+    'normal':             'Normal',
+  };
+  const VARIANT_DISPLAY_ORDER = [
+    '1st Edition Holo', 'Unlimited Holo',
+    '1st Edition', 'Unlimited',
+    'Holo', 'Normal',
+    'Reverse Holo',
+  ];
+  // Returns [[label, price], ...] — one entry per distinct print when the
+  // catalogue has 2+, else a single [null, price] entry (no label noise for
+  // cards with only one print).
+  function explodeVariants(hit, cmFallback) {
+    const prices = hit.tcgplayer?.prices || {};
+    const seen = new Set();
+    const unique = [];
+    for (const [key, label] of Object.entries(VARIANT_KEY_LABELS)) {
+      const market = num(prices[key]?.market);
+      if (market == null || seen.has(label)) continue;
+      seen.add(label);
+      unique.push([label, market]);
+    }
+    if (unique.length >= 2) {
+      const order = Object.fromEntries(VARIANT_DISPLAY_ORDER.map((l, i) => [l, i]));
+      unique.sort((a, b) => (order[a[0]] ?? 99) - (order[b[0]] ?? 99));
+      return unique;
+    }
+    if (unique.length === 1) return [[null, unique[0][1]]];
+    return [[null, cmFallback ?? null]];
+  }
+
   function unwrapList(data, key) {
     if (Array.isArray(data)) return data;
     if (data && Array.isArray(data[key])) return data[key];
@@ -226,6 +276,7 @@
         current_market_price: payload.current_market_price ?? payload.usd ?? null,
         purchase_price:       payload.purchase_price ?? null,
         tags:                 Array.isArray(payload.tags) ? payload.tags : (payload.tags ? [payload.tags] : []),
+        product_type: payload.product_type ?? 'card',
       };
       let data;
       try {
@@ -296,10 +347,30 @@
       return one ? [one] : [];
     },
 
-    // Unified entry point used by Scan: photo path → /api/identify, text path → /api/cards/search.
+    // Text search for a sealed product (booster box, ETB, tin, bundle) by
+    // name — e.g. "chaos rising etb". Sealed products aren't in the
+    // single-card catalogues `searchCards` queries, so this posts JSON to
+    // /api/identify with product_type_hint: 'sealed', which parses the
+    // product type out of the query and looks up price + image via eBay
+    // active listings (see app.py _identify_text_sealed).
+    async identifyTextSealed(query) {
+      const res = await request(P.identify(), {
+        method: 'POST',
+        body: { query, product_type_hint: 'sealed' },
+      });
+      const flat = { ...(res?.identity || {}), ...res };
+      const one = normalizeCard(flat);
+      return one ? [one] : [];
+    },
+
+    // Unified entry point used by Scan: photo path → /api/identify, text path → /api/cards/search
+    // (or /api/identify with product_type_hint: 'sealed' when SEALED is selected).
     async identify({ query, image, productTypeHint }) {
       if (image) return this.identifyPhoto(image, productTypeHint);
-      if (query) return this.searchCards(query);
+      if (query) {
+        if (productTypeHint === 'sealed') return this.identifyTextSealed(query);
+        return this.searchCards(query);
+      }
       return [];
     },
 
@@ -488,30 +559,30 @@
         } catch (_) { continue; }
         if (hits.length === 0) continue;
         console.info(`[searchPokemonTCG] ${hits.length} hits for: ${qstr}`);
-        return hits.map(hit => {
-          const tcgp = hit.tcgplayer?.prices;
-          const tcgPrice = num(tcgp?.normal?.market) ?? num(tcgp?.holofoil?.market)
-                        ?? num(tcgp?.reverseHolofoil?.market) ?? num(tcgp?.['1stEditionNormal']?.market)
-                        ?? num(tcgp?.unlimitedHolofoil?.market);
+        return hits.flatMap(hit => {
           const cmPrice = num(hit.cardmarket?.prices?.averageSellPrice) ?? num(hit.cardmarket?.prices?.trendPrice);
-          return normalizeCard({
-            id: hit.id, // e.g. "me2-18" — UI-only temp id; backend assigns one on add
+          const variants = explodeVariants(hit, cmPrice);
+          return variants.map(([variantLabel, price]) => normalizeCard({
+            // e.g. "me2-18" — UI-only temp id; backend assigns one on add.
+            // Distinct prints of the same card get a suffixed id so they
+            // don't collide/dedupe against each other in candidate lists.
+            id: variantLabel ? `${hit.id}::${variantLabel}` : hit.id,
             name: hit.name,
             card_number: hit.number,
             set_name: hit.set?.name,
             language: 'english',
             condition: 'NM',
             is_graded: false,
-            variant: hit.rarity,
+            variant: variantLabel || hit.rarity,
             hp: hit.hp,
             image_url: hit.images?.large || hit.images?.small || null,
-            current_market_price: tcgPrice ?? cmPrice ?? null,
+            current_market_price: price ?? cmPrice ?? null,
             last_priced_at: hit.tcgplayer?.updatedAt || hit.cardmarket?.updatedAt || null,
             // Stash a few extras for UI filter chips
             _set_release: hit.set?.releaseDate,
             _set_id:      hit.set?.id,
             _rarity:      hit.rarity,
-          });
+          }));
         });
       }
       // Every query returned 0 hits.
@@ -675,6 +746,35 @@
       }
       console.info(`[searchTCGdex/${lang}] ${out.length} hits for "${cleanName}"`);
       return out;
+    },
+
+    // Last-resort identity fallback — PriceCharting indexes some
+    // Chinese-exclusive sets (e.g. "Pokemon Chinese CSV4C") that TCGdex has
+    // registered as a set but never populated with card data. Goes through
+    // our backend (PriceCharting's HTML pages have no CORS headers for
+    // direct browser fetches, unlike TCGdex's API).
+    async searchPriceCharting(query, { pageSize = 10 } = {}) {
+      const q = String(query || '').trim();
+      if (!q) return [];
+      try {
+        const data = await request(P.pricechartingSearch(q, pageSize));
+        const list = unwrapList(data, 'results');
+        const out = list.map(r => normalizeCard({
+          id: r.id,
+          name: r.name,
+          card_number: r.card_number,
+          set_name: r.set_name,
+          language: r.language,
+          condition: 'NM',
+          is_graded: false,
+          image_url: r.image_url,
+          market_price: r.market_price,
+          _source: 'pricecharting',
+          _pricecharting_url: r.pricecharting_url,
+        })).filter(Boolean);
+        console.info(`[searchPriceCharting] ${out.length} hits for "${q}"`);
+        return out;
+      } catch (_) { return []; }
     },
 
     // Direct image lookup against the public Pokemon TCG API.
