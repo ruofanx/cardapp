@@ -258,9 +258,16 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                   )}
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
-                <div className="row" style={{ justifyContent: 'space-between', fontSize: 10 }}>
+                <div className="mono" style={{ fontSize: 9, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {[c.code, c.set].filter(Boolean).join(' · ')}
+                </div>
+                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 4, fontSize: 10 }}>
                   <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="xs"/>
-                  <span className="mono" style={{ color: 'var(--ink-3)' }}>{c.lang}</span>
+                  {c.variant && (
+                    <span className="mono" style={{ color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                      {c.variant}
+                    </span>
+                  )}
                 </div>
               </button>
             ))}
