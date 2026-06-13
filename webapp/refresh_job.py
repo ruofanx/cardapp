@@ -24,6 +24,7 @@ from apscheduler.triggers.cron import CronTrigger
 import db
 import pricecharting_lookup
 import raw_price_resolver
+import price_history_refresh
 
 log = logging.getLogger(__name__)
 
@@ -133,9 +134,19 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=60 * 60,   # 1 hour grace after server downtime
     )
+    _scheduler.add_job(
+        price_history_refresh.refresh_all,
+        CronTrigger(day_of_week="sun", hour=6, minute=0, timezone=DAILY_TIMEZONE),
+        kwargs={"min_days": 35},
+        id="weekly_price_history_refresh",
+        name="Weekly price-history refresh (Sun 6am CT)",
+        replace_existing=True,
+        misfire_grace_time=6 * 60 * 60,   # 6 hour grace
+    )
     _scheduler.start()
-    log.info("Scheduler started: daily price refresh @ %02d:00 %s",
-             DAILY_HOUR_LOCAL, DAILY_TIMEZONE)
+    log.info("Scheduler started: daily price refresh @ %02d:00 %s, "
+             "weekly price-history refresh Sun 06:00 %s",
+             DAILY_HOUR_LOCAL, DAILY_TIMEZONE, DAILY_TIMEZONE)
     return _scheduler
 
 
