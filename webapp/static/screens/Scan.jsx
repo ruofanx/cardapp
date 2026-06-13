@@ -798,7 +798,13 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
               // If we have no catalogued art for this printing, fall back to
               // the user's own scan photo so they see THEIR actual card, not
               // a misleading English/Japanese reprint.
-              const candForDisplay = cand.image_url ? cand : { ...cand, image_url: capturedPhotoUrl || null };
+              // Last resort: normalizeCard nulls out EN-CDN art for JP/CH
+              // cards (api.jsx) to avoid showing the wrong-language print as
+              // the primary image — but a blank tile is worse than that
+              // EN art when there's no captured photo either, so fall back
+              // to the pre-strip `raw.image_url`.
+              const fallbackImage = capturedPhotoUrl || cand.raw?.image_url || cand.raw?.image || null;
+              const candForDisplay = cand.image_url ? cand : { ...cand, image_url: fallbackImage };
               return (
                 <button key={cand.id || i} className="tap" onClick={() => setPicked(i)} style={{
                   display: 'flex', flexDirection: 'column', gap: 6,
@@ -839,7 +845,11 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                     <div style={{ fontSize: 10, color: 'var(--ink-3)' }}>{cand.variant || cand._rarity}</div>
                   )}
                   <div style={{ marginTop: 2 }}>
-                    <Price usd={cand.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
+                    {/* For the selected candidate, prefer the live NM-raw
+                        quote (same one driving ADJUSTED PRICE below) so the
+                        tile and the editor never show two different numbers
+                        for the same card. */}
+                    <Price usd={(active && quotedUSD != null) ? quotedUSD : cand.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
                   </div>
                 </button>
               );
