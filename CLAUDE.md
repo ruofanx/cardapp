@@ -15,9 +15,11 @@ FastAPI backend + React/Babel PWA frontend, served together on port 8000.
 │   ├── card_lookup.py       # Pokemon TCG API (EN cards + TCGplayer prices)
 │   ├── tcgdex_lookup.py     # TCGdex (JP cards + Cardmarket EUR prices)
 │   ├── pricecharting_lookup.py  # PriceCharting scraper (graded + raw)
-│   ├── ebay_lookup.py       # eBay sold listings endpoint + 24h cache
+│   ├── raw_price_resolver.py    # Shared raw-card baseline + PriceCharting sold-comp blend
+│   ├── ebay_lookup.py       # eBay sold listings endpoint + 24h cache + optional ScraperAPI
 │   ├── ebay_browse_api.py   # eBay Browse API (active listings, catalog fallback)
-│   ├── refresh_job.py       # APScheduler daily 7am price refresh
+│   ├── refresh_job.py       # APScheduler: daily 7am price refresh + weekly trend-history refresh
+│   ├── price_history_refresh.py # PriceCharting chart-data → price_history (weekly job + manual backfill)
 │   ├── trade_proposer.py    # Subset-sum trade matcher
 │   ├── run.sh               # Start server: uvicorn app:app --reload --port 8000
 │   ├── pokemon_trading.sqlite      # Main DB (gitignored)
@@ -90,11 +92,21 @@ fixed 2026-06-07 by reordering the mounts.)
 ## Pricing logic
 
 ### Source routing
-- **Graded** → PriceCharting first; falls back to `GRADED_MULTIPLIERS` table in `app.py`
-- **Raw EN** → TCGplayer via Pokemon TCG API, variant-aware key selection
-  - Default key when variant absent: `holofoil` (Unlimited), NOT `max()`
-  - `_OLD_PRINT_VARIANTS = {"shadowless"}` — 1st Edition uses TCGplayer keys, not PriceCharting
-- **Raw JP** → PriceCharting Ungraded JP → TCGdex Cardmarket EUR → eBay last
+- **Graded** → PriceCharting first; falls back to `GRADED_MULTIPLIERS` table in
+  `app.py`, using the raw NM baseline from `raw_price_resolver.resolve_raw_price()`.
+- **Raw (EN + JP)** → `webapp/raw_price_resolver.py` (`resolve_raw_price()`),
+  shared by `/api/refresh-price` and the daily refresh job:
+  1. **Baseline** — JP: eBay Browse API median of active listings; otherwise
+     TCGplayer via Pokemon TCG API (variant-aware key selection — default key
+     `holofoil` (Unlimited) when variant absent, NOT `max()`) or Cardmarket
+     EUR (JP, via TCGdex); JP last-ditch: eBay sold median.
+  2. **PriceCharting "Ungraded" cross-check** — sold-comp-derived, fetched for
+     ALL raw cards (1st Edition / Shadowless included via PriceCharting's
+     separate product page). The previous JP/old-print-only gate is gone.
+  3. **Blend** — if both are present and diverge by more than
+     `RAW_PRICE_DIVERGENCE_THRESHOLD` (15%), use PriceCharting's price (it's
+     closer to "what this is actually selling for"); otherwise keep the
+     catalogue baseline unchanged.
 
 ### eBay parser (`pricing_engine.py → parse_ebay_sold_html`)
 Splits HTML on `<li class="s-item">` boundaries, extracts date/price/title/url
@@ -104,6 +116,21 @@ changes class names (returned 0 results after their last HTML overhaul).
 
 eBay URL: `LH_Sold=1&LH_Complete=1&_ipg=240&_sop=13` (240 results, newest first).
 No date param in the URL — Python filters by `period_days` after parsing (default 60).
+
+### ScraperAPI (optional, `SCRAPERAPI_KEY`)
+If `SCRAPERAPI_KEY` is set, `ebay_lookup._fetch_ebay_html()` routes eBay
+sold-listings fetches through
+`http://api.scraperapi.com/?api_key=...&url=...` instead of a direct GET.
+Used by `lookup_sold_listings` (`/api/sold-listings` + the eBay-recent-mean
+check in `/api/refresh-price`) and the legacy `lookup_raw_price`. Both call
+sites are 24h-cached per-URL.
+
+Deliberately NOT wired into the daily/weekly refresh jobs (`refresh_job.py`,
+`price_history_refresh.py`) — those never call into `ebay_lookup`'s
+eBay-HTML fetchers, so ScraperAPI usage stays limited to user-initiated,
+cached requests within the free 1,000-credit/month tier. Also not wired into
+`lookup_sealed_recent_n_mean` (sealed product sold-listings) — sealed pricing
+is out of scope for this change. Unset (default): zero behavioral change.
 
 ### Grading scales
 PSA: whole grades only (10, 9, 8…).
@@ -170,18 +197,25 @@ Key tables: `users`, `cards`, `tags`, `card_tags`, `price_history`.
 `db.log_price()` is idempotent within 60s + ±$0.005.
 `db.backfill_price_history()` runs at startup to seed legacy cards.
 
-### Historical price backfill (`backfill_historical_prices.py`)
+### Price-history refresh (`webapp/price_history_refresh.py`)
 PriceCharting product pages embed `VGPC.chart_data = {"used": [[ts_ms, cents], ...], ...}`
 inline — a free ~33-month monthly price series per card (`_CHART_DATA_RE` /
 `pricecharting_lookup.fetch_chart_history`). The `"used"` series matches the
 "Ungraded" row in the price table (verified against live cached prices).
 
-`backfill_historical_prices.py` (one-off script, run from `webapp/`) reads
-this for every **raw** card (`is_graded = 0`) and inserts rows into
+`refresh_one()` / `refresh_all()` read this for every **raw** card
+(`is_graded = 0`) and every sealed product, inserting rows into
 `price_history` with `source='pricecharting_chart_backfill'`, deduped by
 date so re-runs are safe. Graded cards are skipped — chart_data only exposes
 one generic "graded" series, not grade/grader-specific ones, so blending it
 into a graded card's history would mix incompatible price scales.
+
+`refresh_job.py` runs `refresh_all(min_days=35)` weekly (Sunday 6am CT,
+before the 7am daily price refresh) so the Overview trend chart keeps
+picking up PriceCharting's latest monthly chart_data point.
+
+`backfill_historical_prices.py` is a thin CLI wrapper over the same function
+for one-off / manual runs (run from `webapp/`):
 
 ```bash
 cd webapp && source .venv/bin/activate
