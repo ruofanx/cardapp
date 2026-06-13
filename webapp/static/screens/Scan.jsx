@@ -602,6 +602,9 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const [purchasePrice, setPurchasePrice] = useStateScan('');
   // Comma-separated user tags (e.g. "favorite, trade-bait, sleeve").
   const [tagsInput, setTagsInput] = useStateScan('');
+  // In-flight guard for "Add to Collection" — disables the button and
+  // prevents double-submits while the request is pending.
+  const [isAdding, setIsAdding] = useStateScan(false);
   // Live NM-raw quote — overrides the candidate's `usd` (from TCGdex
   // Cardmarket EUR for JP/CH, which is often stale/off by 5-10x for newer
   // JP sets) with the backend's eBay/PriceCharting-backed estimate.
@@ -1022,7 +1025,7 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
               flex: 1, height: 46, borderRadius: 14,
               background: 'var(--bg-2)', color: 'var(--ink)',
               fontWeight: 500, fontSize: 14,
-            }}>Skip</button>
+            }}>Done</button>
             <button className="tap" onClick={() => onDetail({ ...card, condition, lang, grader: isGraded ? grader : null, grade: isGraded ? grade : null, is_graded: isGraded, usd: adjUSD })} style={{
               flex: 1, height: 46, borderRadius: 14,
               background: 'var(--bg-2)', color: 'var(--ink)',
@@ -1051,28 +1054,34 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                 <Icon name="star" size={20}/>
               </button>
             )}
-            <button className="tap" onClick={() => {
+            <button className="tap" disabled={isAdding} onClick={async () => {
               const paidNum = Number(purchasePrice);
               const tags = tagsInput
                 .split(',')
                 .map(t => t.trim())
                 .filter(Boolean);
-              onAddToCollection({
-                ...card,
-                condition,
-                lang,
-                grader: isGraded ? grader : null,
-                grade:  isGraded ? grade  : null,
-                is_graded: isGraded,
-                usd: adjUSD,
-                purchase_price: (purchasePrice !== '' && Number.isFinite(paidNum) && paidNum >= 0) ? paidNum : null,
-                tags,
-              });
+              setIsAdding(true);
+              try {
+                await onAddToCollection({
+                  ...card,
+                  condition,
+                  lang,
+                  grader: isGraded ? grader : null,
+                  grade:  isGraded ? grade  : null,
+                  is_graded: isGraded,
+                  usd: adjUSD,
+                  purchase_price: (purchasePrice !== '' && Number.isFinite(paidNum) && paidNum >= 0) ? paidNum : null,
+                  tags,
+                });
+              } finally {
+                setIsAdding(false);
+              }
             }} style={{
               flex: 1.4, height: 46, borderRadius: 14,
               background: 'var(--accent)', color: 'var(--accent-ink)',
               fontWeight: 600, fontSize: 14,
-            }}>Add to cart</button>
+              opacity: isAdding ? 0.6 : 1,
+            }}>{isAdding ? 'Adding…' : 'Add to Collection'}</button>
           </div>
         )}
       </div>
