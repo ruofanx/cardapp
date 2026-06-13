@@ -782,14 +782,14 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
           </div>
         )}
 
-        {/* Scrollable results list */}
+        {/* Scrollable results grid */}
         <div style={{ overflowY: 'auto', flex: 1, marginRight: -16, paddingRight: 16 }}>
           {filtered.length === 0 && (
             <div style={{ padding: '24px 0', color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
               No matches with these filters.
             </div>
           )}
-          <div className="col" style={{ gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
             {filtered.map((cand, i) => {
               const active = i === safePicked;
               // If we have no catalogued art for this printing, fall back to
@@ -798,34 +798,44 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
               const candForDisplay = cand.image_url ? cand : { ...cand, image_url: capturedPhotoUrl || null };
               return (
                 <button key={cand.id || i} className="tap" onClick={() => setPicked(i)} style={{
-                  display: 'grid', gridTemplateColumns: '52px 1fr auto', gap: 12, alignItems: 'center',
+                  display: 'flex', flexDirection: 'column', gap: 6,
                   padding: 10, borderRadius: 14, textAlign: 'left',
                   background: active ? 'var(--bg-2)' : 'var(--bg-1)',
                   border: `1px solid ${active ? 'var(--accent)' : 'var(--hairline-soft)'}`,
                 }}>
-                  <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="sm" flat/>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="row gap-2" style={{ alignItems: 'center' }}>
-                      <span style={{
-                        fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, flexShrink: 0,
-                        background: cand.lang === 'JP' ? 'oklch(0.45 0.16 25)'
-                                   : cand.lang === 'CH' ? 'oklch(0.45 0.14 80)'
-                                   : 'oklch(0.40 0.06 250)',
-                        color: '#fff',
-                        letterSpacing: '0.05em',
-                      }}>{cand.lang || 'EN'}</span>
-                      <span style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{cand.name}</span>
+                  <div style={{ position: 'relative', alignSelf: 'center' }}>
+                    <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="md" flat/>
+                    <div style={{
+                      position: 'absolute', top: -6, right: -6,
+                      width: 24, height: 24, borderRadius: 12,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: active ? 'var(--accent)' : 'var(--bg-3)',
+                      color: active ? 'var(--accent-ink)' : 'var(--ink-2)',
+                      border: '1px solid var(--hairline-soft)',
+                    }}>
+                      <Icon name="plus" size={14} stroke={2.4}/>
                     </div>
-                    {!window.api?.isSealedProduct?.(cand) && (
-                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  </div>
+                  <div className="row gap-2" style={{ alignItems: 'center' }}>
+                    <span style={{
+                      fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, flexShrink: 0,
+                      background: cand.lang === 'JP' ? 'oklch(0.45 0.16 25)'
+                                 : cand.lang === 'CH' ? 'oklch(0.45 0.14 80)'
+                                 : 'oklch(0.40 0.06 250)',
+                      color: '#fff',
+                      letterSpacing: '0.05em',
+                    }}>{cand.lang || 'EN'}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.25 }}>{cand.name}</span>
+                  </div>
+                  {!window.api?.isSealedProduct?.(cand) && (
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                       {cand.code}{cand.set ? ` · ${cand.set}` : ''}
                     </div>
-                    )}
-                    {(cand.variant || cand._rarity) && (
-                      <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 2 }}>{cand.variant || cand._rarity}</div>
-                    )}
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
+                  )}
+                  {(cand.variant || cand._rarity) && (
+                    <div style={{ fontSize: 10, color: 'var(--ink-3)' }}>{cand.variant || cand._rarity}</div>
+                  )}
+                  <div style={{ marginTop: 2 }}>
                     <Price usd={cand.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
                   </div>
                 </button>
