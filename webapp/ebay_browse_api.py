@@ -442,3 +442,64 @@ async def lookup_sealed_image(
     if not relevant:
         return None
     return min(relevant, key=lambda it: sealed_title_extra_word_count(it.title, sq))
+
+
+async def median_sealed_active_price(
+    name: str,
+    set_name: str,
+    product_type: str,
+    language: str = "english",
+    sample_size: int = 8,
+) -> Optional[dict]:
+    """Trimmed median of active-listing prices for a sealed product.
+
+    Final price fallback for `_refresh_sealed_price` (app.py) when
+    PriceCharting has no catalogue entry for this product (e.g. promo
+    League Battle Decks) and eBay's sold-listings HTML scrape — blocked by
+    a hard 403 from eBay's anti-bot — returns nothing. Active asking prices
+    run a bit high vs sold comps, but are far better than no price at all.
+
+    Builds the same query as `lookup_sealed_image` (set_name + product-type
+    term), then filters with `is_relevant_sealed_title` to drop
+    opened/resealed/lot listings before computing the median — the generic
+    `median_relevant_price` (single-card path) doesn't apply those filters
+    and lets junk listings skew the result.
+
+    Returns dict {"median_usd", "sample_size", "raw_sample_size", "low_usd",
+    "high_usd", "query"}, or None if fewer than 2 relevant priced listings
+    are found.
+    """
+    product_term = PRODUCT_TYPE_SEARCH_TERMS.get(product_type, "")
+    parts = [set_name or name]
+    if product_term:
+        parts.append(product_term)
+    if language.lower() == "japanese":
+        parts.append("Japanese")
+    query = " ".join(p for p in parts if p)
+
+    items = await search_items(query, limit=max(sample_size * 2, 20), category_id=None)
+    sq = SealedProductQuery(name=name, set_name=set_name or name,
+                             product_type=product_type, language=language)
+    relevant = [it for it in items
+                if it.price_usd and it.price_usd > 0 and is_relevant_sealed_title(it.title, sq)]
+    if len(relevant) < 2:
+        return None
+
+    prices = sorted(it.price_usd for it in relevant)
+    n = len(prices)
+    trim = max(1, int(n * 0.10)) if n >= 5 else 0
+    trimmed = prices[trim:n - trim] if trim else prices
+    if not trimmed:
+        return None
+
+    median = trimmed[len(trimmed) // 2] if len(trimmed) % 2 else (
+        trimmed[len(trimmed) // 2 - 1] + trimmed[len(trimmed) // 2]) / 2
+
+    return {
+        "median_usd": round(median, 2),
+        "sample_size": len(trimmed),
+        "raw_sample_size": n,
+        "low_usd": min(trimmed),
+        "high_usd": max(trimmed),
+        "query": query,
+    }

@@ -514,6 +514,7 @@ function ProductTypeBadge({ type }) {
     etb:          "Elite Trainer Box",
     tin:          "Tin",
     bundle:       "Bundle",
+    league_battle_deck: "League Battle Deck",
   };
   const label = labels[type];
   if (!label) return null;

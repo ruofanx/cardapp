@@ -602,6 +602,56 @@ def test_lookup_sealed_image_prefers_generic_over_sub_expansion(monkeypatch):
     assert item.image_url == "https://i.ebayimg.com/images/g/generic/s-l225.jpg"
 
 
+# ---- active-listing median price (final fallback for uncatalogued products) ----
+
+def test_median_sealed_active_price_filters_and_trims(monkeypatch):
+    """Active-listing prices are filtered with is_relevant_sealed_title
+    (drops opened/lot/unrelated listings) before computing the trimmed
+    median — the 10% trim drops the $20 and $599.99 outliers."""
+    async def fake_search_items(query, **kw):
+        assert "Pikachu And Zerkrom Tag Team League Battle Deck" in query
+        assert "League Battle Deck" in query
+        return [
+            _ebay_item("Pokemon TCG Pikachu and Zekrom Gx League Battle Deck Factory Sealed", price=599.99),
+            _ebay_item("Pikachu & Zekrom GX League Battle Deck (Read full description)", price=20.0),
+            _ebay_item("Pikachu and Zekrom GX League Battle Deck New Sealed", price=399.90),
+            _ebay_item("Pikachu and Zerkrom GX League Battle Deck Sealed", price=450.00),
+            _ebay_item("Pikachu and Zekrom GX League Battle Deck Brand New Sealed", price=425.00),
+            _ebay_item("Pikachu and Zekrom GX League Battle Deck OPENED no cards", price=150.00),
+        ]
+    monkeypatch.setattr(ebay_browse_api, "search_items", fake_search_items)
+
+    import asyncio
+    result = asyncio.run(ebay_browse_api.median_sealed_active_price(
+        name="Pikachu And Zerkrom Tag Team League Battle Deck",
+        set_name="Pikachu And Zerkrom Tag Team League Battle Deck",
+        product_type="league_battle_deck",
+    ))
+    assert result is not None
+    # The OPENED listing is dropped by is_relevant_sealed_title, leaving
+    # 5 relevant listings: 20/399.90/425/450/599.99.
+    assert result["raw_sample_size"] == 5
+    # 10% trim (1 from each end) drops the $20 and $599.99 outliers.
+    assert result["sample_size"] == 3
+    assert result["median_usd"] == 425.0
+    assert result["low_usd"] == 399.90
+    assert result["high_usd"] == 450.0
+
+
+def test_median_sealed_active_price_returns_none_with_fewer_than_two(monkeypatch):
+    async def fake_search_items(query, **kw):
+        return [_ebay_item("Pikachu and Zekrom GX League Battle Deck New Sealed", price=399.90)]
+    monkeypatch.setattr(ebay_browse_api, "search_items", fake_search_items)
+
+    import asyncio
+    result = asyncio.run(ebay_browse_api.median_sealed_active_price(
+        name="Pikachu And Zerkrom Tag Team League Battle Deck",
+        set_name="Pikachu And Zerkrom Tag Team League Battle Deck",
+        product_type="league_battle_deck",
+    ))
+    assert result is None
+
+
 def test_refresh_sealed_price_includes_ebay_image(monkeypatch):
     """_refresh_sealed_price falls back to an eBay-listing image when
     PriceCharting has no cover image for this product."""
@@ -698,6 +748,70 @@ def test_refresh_sealed_price_prefers_pricecharting_image(monkeypatch):
     assert result["source"] == "pricecharting_sealed"
 
 
+def test_refresh_sealed_price_ebay_active_median_fallback(monkeypatch):
+    """When eBay sold-listing data is blocked (403) AND PriceCharting has no
+    catalogue entry for the product (e.g. a promo League Battle Deck not
+    listed under pokemon-promo/league-battle-deck-*), _refresh_sealed_price
+    falls back to the eBay Browse API active-listing median rather than
+    reporting "not_found"."""
+    async def fake_lookup_sealed_image(**kw):
+        return _ebay_item("Pikachu and Zekrom GX League Battle Deck New Sealed")
+    monkeypatch.setattr(ebay_browse_api, "lookup_sealed_image", fake_lookup_sealed_image)
+
+    async def fake_recent_n_mean(**kw):
+        return None
+    monkeypatch.setattr("ebay_lookup.lookup_sealed_recent_n_mean", fake_recent_n_mean)
+
+    async def fake_lookup_sealed_price(**kw):
+        return None
+    monkeypatch.setattr("pricecharting_lookup.lookup_sealed_price", fake_lookup_sealed_price)
+
+    async def fake_median_sealed_active_price(**kw):
+        assert kw["product_type"] == "league_battle_deck"
+        return {"median_usd": 415.0, "sample_size": 6, "raw_sample_size": 8,
+                "low_usd": 260.0, "high_usd": 500.0, "query": "..."}
+    monkeypatch.setattr(ebay_browse_api, "median_sealed_active_price", fake_median_sealed_active_price)
+
+    import asyncio
+    from app import RefreshPriceRequest
+    result = asyncio.run(app_module._refresh_sealed_price(RefreshPriceRequest(
+        name="Pikachu And Zerkrom Tag Team League Battle Deck",
+        set_name="Pikachu And Zerkrom Tag Team League Battle Deck",
+        product_type="league_battle_deck",
+    )))
+    assert result["estimated_price"] == 415.0
+    assert result["source"] == "ebay_active_median"
+    assert result["image_url"].endswith("s-l225.jpg")
+
+
+def test_refresh_sealed_price_not_found_when_all_sources_empty(monkeypatch):
+    """If sold-listings, PriceCharting, AND active-listing median all come
+    up empty, _refresh_sealed_price still reports "not_found" (no exception)."""
+    async def fake_lookup_sealed_image(**kw):
+        return None
+    monkeypatch.setattr(ebay_browse_api, "lookup_sealed_image", fake_lookup_sealed_image)
+
+    async def fake_recent_n_mean(**kw):
+        return None
+    monkeypatch.setattr("ebay_lookup.lookup_sealed_recent_n_mean", fake_recent_n_mean)
+
+    async def fake_lookup_sealed_price(**kw):
+        return None
+    monkeypatch.setattr("pricecharting_lookup.lookup_sealed_price", fake_lookup_sealed_price)
+
+    async def fake_median_sealed_active_price(**kw):
+        return None
+    monkeypatch.setattr(ebay_browse_api, "median_sealed_active_price", fake_median_sealed_active_price)
+
+    import asyncio
+    from app import RefreshPriceRequest
+    result = asyncio.run(app_module._refresh_sealed_price(RefreshPriceRequest(
+        name="Some Obscure Product", set_name="Some Obscure Product", product_type="league_battle_deck",
+    )))
+    assert result["estimated_price"] is None
+    assert result["source"] == "not_found"
+
+
 def test_identify_photo_sealed_product_includes_image(monkeypatch):
     """End-to-end: /api/identify for a sealed-product scan returns a real
     product photo (eBay active-listing image) as image_url, not null."""
@@ -736,6 +850,8 @@ def test_identify_photo_sealed_product_includes_image(monkeypatch):
     ("paldea tin", "Paldea", "tin"),
     ("scarlet violet bundle", "Scarlet Violet", "bundle"),
     ("phantasmal flames", "Phantasmal Flames", "etb"),  # no type phrase -> defaults to etb
+    ("pikachu and zekrom league battle deck", "Pikachu And Zekrom", "league_battle_deck"),
+    ("zacian v league battle decks", "Zacian V", "league_battle_deck"),
 ])
 def test_parse_sealed_text_query(query, expected_name, expected_type):
     name, set_name, product_type = app_module._parse_sealed_text_query(query)

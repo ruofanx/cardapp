@@ -56,11 +56,12 @@ class CardQuery:
 
 
 PRODUCT_TYPE_SEARCH_TERMS: dict[str, str] = {
-    "booster_pack": "Booster Pack",
-    "booster_box":  "Booster Box",
-    "etb":          "Elite Trainer Box",
-    "tin":          "Tin",
-    "bundle":       "Bundle",
+    "booster_pack":      "Booster Pack",
+    "booster_box":       "Booster Box",
+    "etb":               "Elite Trainer Box",
+    "tin":               "Tin",
+    "bundle":            "Bundle",
+    "league_battle_deck": "League Battle Deck",
 }
 
 
