@@ -3,8 +3,11 @@ Daily price refresh job.
 
 At 7:00 AM Central Time, walks every card in every collection and refreshes
 its current_market_price by re-running the same logic /api/refresh-price uses
-(PriceCharting for graded; TCGplayer/Cardmarket baseline + condition multiplier
-for raw). Updates last_priced_at on success.
+(PriceCharting for graded; raw_price_resolver's catalogue baseline +
+PriceCharting sold-comp blend for raw). Updates last_priced_at on success.
+
+Also registers a weekly job (Sunday 6am CT) that refreshes price_history from
+PriceCharting's chart data via price_history_refresh.refresh_all().
 
 The scheduler runs in-process via APScheduler — fine for a personal/family
 deployment where uvicorn stays up. If the server is down at 7am, it'll just
