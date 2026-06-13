@@ -22,8 +22,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 import db
-import card_lookup
 import pricecharting_lookup
+import raw_price_resolver
 
 log = logging.getLogger(__name__)
 
@@ -89,14 +89,14 @@ async def _price_for_card(card: db.Card) -> float | None:
             log.warning("PriceCharting failed for card %s: %s", card.id, e)
         # Fall through to multiplier estimate
 
-    # Baseline lookup — variant matters for old cards (Unlimited vs 1st Ed)
-    base = await card_lookup.lookup_card(
-        card.name, card.set_name, card.card_number, language=card.language,
-        variant=card.variant,
+    # Baseline + PriceCharting sold-comp blend — same as /api/refresh-price.
+    result = await raw_price_resolver.resolve_raw_price(
+        card.name, card.set_name or "", card.card_number or "",
+        language=card.language, variant=card.variant,
     )
-    if not base or not base.market_price:
+    if result.nm_price is None:
         return None
-    nm_price = float(base.market_price)
+    nm_price = result.nm_price
 
     if card.is_graded and card.grade_company and card.grade is not None:
         # Reuse the multiplier table from app.py
