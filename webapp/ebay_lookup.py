@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -44,6 +46,40 @@ CACHE_TTL_SECONDS = 24 * 3600
 USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
               "AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/126.0.0.0 Safari/537.36")
+
+
+# Optional: route eBay HTML fetches through ScraperAPI to dodge anti-bot
+# blocking. Free tier = 1,000 credits/mo. Unset = current direct-fetch
+# behavior, unchanged.
+SCRAPERAPI_KEY = os.environ.get("SCRAPERAPI_KEY")
+
+
+async def _fetch_ebay_html(url: str) -> Optional[str]:
+    """Fetch an eBay sold-listings page.
+
+    Routed through ScraperAPI if SCRAPERAPI_KEY is set; otherwise a direct
+    GET with USER_AGENT (current behavior). Returns the response body, or
+    None on a transport error or non-200 status (logs a warning).
+    """
+    if SCRAPERAPI_KEY:
+        fetch_url = f"http://api.scraperapi.com/?api_key={SCRAPERAPI_KEY}&url={quote(url, safe='')}"
+        headers = {}
+    else:
+        fetch_url = url
+        headers = {"User-Agent": USER_AGENT}
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+            r = await client.get(fetch_url, follow_redirects=True)
+    except httpx.HTTPError as e:
+        log.warning("eBay fetch failed: %s", e)
+        return None
+
+    if r.status_code != 200:
+        log.warning("eBay returned %s for %s", r.status_code, url)
+        return None
+
+    return r.text
 
 
 @dataclass
@@ -206,20 +242,12 @@ async def lookup_sold_listings(
             sales=cached.get("sales", [])[:max_listings],
         )
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0,
-                                       headers={"User-Agent": USER_AGENT}) as client:
-            r = await client.get(url, follow_redirects=True)
-    except httpx.HTTPError as e:
-        log.warning("eBay fetch failed: %s", e)
-        return None
-
-    if r.status_code != 200:
-        log.warning("eBay returned %s for %s", r.status_code, url)
+    html = await _fetch_ebay_html(url)
+    if html is None:
         return None
 
     from pricing_engine import is_relevant_title
-    parsed = parse_ebay_sold_html(r.text, period_days=period_days)
+    parsed = parse_ebay_sold_html(html, period_days=period_days)
     # Filter to relevant listings (skips proxies, lots, mismatched graders).
     relevant = [s for s in parsed if is_relevant_title(s.title, query)]
     # Sort by date desc so newest comps surface first.
@@ -427,19 +455,11 @@ async def lookup_raw_price(name: str, set_name: str, card_number: str,
     if cached:
         return EbaySoldResult(**{**cached, "cached": True})
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0,
-                                       headers={"User-Agent": USER_AGENT}) as client:
-            r = await client.get(url, follow_redirects=True)
-    except httpx.HTTPError as e:
-        log.warning("eBay fetch failed: %s", e)
+    html = await _fetch_ebay_html(url)
+    if html is None:
         return None
 
-    if r.status_code != 200:
-        log.warning("eBay returned %s for %s", r.status_code, url)
-        return None
-
-    sales = parse_ebay_sold_html(r.text, period_days=period_days)
+    sales = parse_ebay_sold_html(html, period_days=period_days)
     quote = aggregate_sales(sales, query, period_days=period_days)
     if not quote:
         return None
