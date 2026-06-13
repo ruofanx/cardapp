@@ -7,7 +7,7 @@
 
 const { useState: useStateScan, useEffect: useEffectScan, useRef: useRefScan } = React;
 
-function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, addToCollection, backend }) {
+function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection, backend }) {
   const [phase, setPhase] = useStateScan('idle');         // idle | scanning | result
   const [flash, setFlash] = useStateScan(false);
   const [pipelineLog, setPipelineLog] = useStateScan([]);
@@ -250,25 +250,15 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
     if (fileInputRef.current) fileInputRef.current.click();
   };
 
-  const handleAdd = (card) => {
-    // Attach the user's captured photo so it survives the queue → backend
-    // → userPhotos pipeline. Bulk flush / Add path can persist it after the
-    // backend card row is created with a real id.
-    const cardWithPhoto = capturedPhotoFile
-      ? { ...card, _capturedPhotoFile: capturedPhotoFile }
-      : card;
-    setScanQueue(q => [...q, cardWithPhoto]);
-    setPhase('idle');
-    setPipelineLog([]);
-    setCandidates([]);
-  };
+  // Generic bottom toast — { icon, text }. Used for both the wishlist path
+  // and the direct "Add to Collection" path below.
+  const [toast, setToast] = useStateScan(null);
 
   // Wishlist path — writes the card straight to the backend tagged
   // `wishlist`, bypassing the scan cart (since the user doesn't own this
   // card yet). purchase_price is null so it doesn't pollute gain/loss
   // calculations. Browse hides wishlist cards from default views and
   // surfaces them under the Wishlist filter chip.
-  const [wishlistToast, setWishlistToast] = useStateScan(null);
   const handleAddWishlist = async (card) => {
     if (!addToCollection) return;
     const existingTags = Array.isArray(card.tags) ? card.tags : [];
@@ -281,15 +271,37 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
         purchase_price: null,    // wishlist items aren't owned yet
         tags,
       });
-      setWishlistToast(`Added "${card.name}" to wishlist`);
-      setTimeout(() => setWishlistToast(null), 2200);
+      setToast({ icon: 'star', text: `Added "${card.name}" to wishlist` });
+      setTimeout(() => setToast(null), 2200);
     } catch (e) {
-      setWishlistToast(`Couldn't add to wishlist: ${String(e.message || e).slice(0, 60)}`);
-      setTimeout(() => setWishlistToast(null), 3000);
+      setToast({ icon: 'info', text: `Couldn't add to wishlist: ${String(e.message || e).slice(0, 60)}` });
+      setTimeout(() => setToast(null), 3000);
     }
     setPhase('idle');
     setPipelineLog([]);
     setCandidates([]);
+  };
+
+  // Direct-to-collection path — replaces the old scanQueue-based "Add to
+  // cart". On success, resets the sheet so the camera is immediately ready
+  // for the next card. On failure, leaves the sheet open (with the user's
+  // edits intact) so they can retry.
+  const handleAddToCollection = async (card) => {
+    if (!addToCollection) return;
+    const cardWithPhoto = capturedPhotoFile
+      ? { ...card, _capturedPhotoFile: capturedPhotoFile }
+      : card;
+    try {
+      await addToCollection(cardWithPhoto);
+      setToast({ icon: 'check', text: `Added "${card.name}" to collection` });
+      setTimeout(() => setToast(null), 2200);
+      setPhase('idle');
+      setPipelineLog([]);
+      setCandidates([]);
+    } catch (e) {
+      setToast({ icon: 'info', text: `Couldn't add "${card.name}": ${String(e.message || e).slice(0, 60)}` });
+      setTimeout(() => setToast(null), 3000);
+    }
   };
 
   const handleSkip = () => {
@@ -532,15 +544,15 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
           tweaks={tweaks}
           capturedPhotoUrl={capturedPhotoUrl}
           capturedPhotoFile={capturedPhotoFile}
-          onAdd={handleAdd}
+          onAddToCollection={handleAddToCollection}
           onAddWishlist={handleAddWishlist}
           onSkip={handleSkip}
           onDetail={(card) => navigate('detail', { card })}
         />
       )}
 
-      {/* Wishlist confirmation toast — auto-dismisses */}
-      {wishlistToast && (
+      {/* Confirmation/error toast — auto-dismisses */}
+      {toast && (
         <div style={{
           position: 'absolute', left: 16, right: 16, bottom: 96,
           padding: '12px 14px', borderRadius: 12,
@@ -551,8 +563,8 @@ function ScanScreen({ tweaks, navigate, scanQueue, setScanQueue, identifyCard, a
           zIndex: 50, animation: 'riseIn 0.24s ease-out',
           display: 'flex', alignItems: 'center', gap: 10,
         }}>
-          <Icon name="star" size={16} style={{ color: 'var(--accent)' }}/>
-          <span style={{ flex: 1 }}>{wishlistToast}</span>
+          <Icon name={toast.icon} size={16} style={{ color: toast.icon === 'info' ? 'var(--neg)' : 'var(--accent)' }}/>
+          <span style={{ flex: 1 }}>{toast.text}</span>
         </div>
       )}
     </div>
@@ -567,7 +579,7 @@ const GRADERS = ['Raw', 'PSA', 'CGC', 'BGS', 'SGC'];
 // Grade multipliers — averaged across major graders. Raw = base price.
 const GRADE_MULT = { 10: 4.0, 9.5: 2.4, 9: 1.6, 8.5: 1.2, 8: 1.0, 7: 0.75, 6: 0.55, 5: 0.4, 4: 0.3, 3: 0.22, 2: 0.18, 1: 0.15 };
 
-function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, onAdd, onAddWishlist, onSkip, onDetail }) {
+function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
   const cur = tweaks.currency;
   const [picked, setPicked] = useStateScan(0);
   const [setFilter, setSetFilter] = useStateScan('');
@@ -1027,7 +1039,7 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                 .split(',')
                 .map(t => t.trim())
                 .filter(Boolean);
-              onAdd({
+              onAddToCollection({
                 ...card,
                 condition,
                 lang,
