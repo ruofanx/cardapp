@@ -825,7 +825,7 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                       color: '#fff',
                       letterSpacing: '0.05em',
                     }}>{cand.lang || 'EN'}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.25 }}>{cand.name}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{cand.name}</span>
                   </div>
                   {!window.api?.isSealedProduct?.(cand) && (
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
