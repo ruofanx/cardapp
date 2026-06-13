@@ -40,6 +40,7 @@ from trade_proposer import propose_trades
 import card_lookup
 import pricecharting_lookup
 import ebay_lookup
+import raw_price_resolver
 
 app = FastAPI(title="Pokemon Trading Claude")
 
@@ -501,24 +502,6 @@ RAW_CONDITION_MULTIPLIERS = {
 }
 
 
-# Variants where TCGplayer's Pokemon TCG API doesn't reliably distinguish the
-# print, so we benefit from PriceCharting's separate-page coverage.
-#
-# Deliberately NOT in this list:
-#   - "1st edition" / "first edition" — Pokemon TCG API has the dedicated
-#     `1stEditionHolofoil` / `1stEdition` price keys per card. _extract_market_price
-#     selects the right key based on variant. PC is less accurate here.
-#   - "unlimited" — same reason: TCGplayer carries `unlimitedHolofoil` and
-#     `holofoil` directly. Routing through PC drops us onto a generic
-#     "Ungraded" row that conflates conditions and prints.
-#   - Modern rarity descriptors (Holo, Rainbow, Alt Art, Illustration Rare) —
-#     these are different card numbers, not variants, on TCGplayer.
-_OLD_PRINT_VARIANTS = {"shadowless"}
-
-
-def _is_old_variant(variant: Optional[str]) -> bool:
-    return bool(variant) and variant.strip().lower() in _OLD_PRINT_VARIANTS
-
 # Grader-specific multiplier-against-NM-raw, used as a fallback when
 # PriceCharting has no entry for the card. The grading services have very
 # different market premiums — PSA commands the most, BGS Black Label often
@@ -641,6 +624,7 @@ def _pick_multiplier(grade_company: str, grade: float,
 # portion is stripped from the query to derive the product's name/set —
 # e.g. "chaos rising etb" -> name "Chaos Rising", product_type "etb".
 _SEALED_PRODUCT_TYPE_PATTERNS: list[tuple[str, str]] = [
+    (r"\bleague battle decks?\b", "league_battle_deck"),
     (r"\belite trainer box(es)?\b", "etb"),
     (r"\betbs?\b", "etb"),
     (r"\bbooster box(es)?\b", "booster_box"),
@@ -789,6 +773,30 @@ async def _refresh_sealed_price(req: RefreshPriceRequest) -> dict:
             "image_url_large": image_url_large,
         }
 
+    # Tier 3: eBay Browse API active-listing median. Unlike
+    # lookup_sealed_recent_n_mean (HTML scrape of sold listings, blocked by
+    # eBay's anti-bot with a hard 403), the Browse API is an authenticated
+    # REST endpoint and works. Active asking prices run a bit high vs sold
+    # comps, but for products PriceCharting doesn't catalogue at all (e.g.
+    # promo League Battle Decks) this is far better than no price.
+    try:
+        active = await ebay_browse_api.median_sealed_active_price(
+            name=req.name,
+            set_name=req.set_name or "",
+            product_type=req.product_type,
+            language=req.language or "english",
+        )
+    except Exception as e:
+        log.warning("eBay active-listing median lookup failed: %s", e)
+        active = None
+    if active:
+        return {
+            "estimated_price": active["median_usd"],
+            "source": "ebay_active_median",
+            "image_url": image_url,
+            "image_url_large": image_url_large,
+        }
+
     return {
         "estimated_price": None,
         "source": "not_found",
@@ -808,8 +816,9 @@ async def refresh_price(req: RefreshPriceRequest):
     Fallback order if eBay returns nothing (sandbox 403, anti-bot block, or
     genuinely thin comps):
       - Graded → PriceCharting per-grade, then NM × grader multiplier
-      - Raw    → PriceCharting Ungraded (for JP and old prints) → TCGplayer
-        market price → eBay 30/60-day trimmed median (legacy)
+      - Raw    → raw_price_resolver.resolve_raw_price() — catalogue baseline
+        (TCGplayer / Cardmarket / eBay Browse) blended with PriceCharting's
+        sold-comp-derived "Ungraded" price
     """
     if req.product_type and req.product_type != "card":
         return await _refresh_sealed_price(req)
@@ -917,88 +926,14 @@ async def refresh_price(req: RefreshPriceRequest):
                     ),
                 }
 
-    # ----- baseline lookup for raw or graded-fallback ----------------------
-    nm_price: Optional[float] = None
-    baseline_label = "TCGplayer (EN)"
-    extra_note = None
-
-    # PRIMARY for JP cards: eBay Browse API median of relevant active
-    # listings. Cardmarket EUR data is stale for newer JP sets (Crimson
-    # Haze, Battle Partners, Glory of Team Rocket, etc.) — often off by
-    # 5-10×. Trim-medianing 5-10 live eBay listings gives a real number.
-    if (req.name and req.language.lower() == "japanese"
-            and not req.is_graded):
-        try:
-            import ebay_browse_api
-            br = await ebay_browse_api.median_relevant_price(
-                req.name, req.set_name, req.card_number,
-                language="japanese",
-            )
-        except Exception as e:
-            log.warning("eBay Browse median lookup failed: %s", e)
-            br = None
-        if br and br["median_usd"]:
-            nm_price = float(br["median_usd"])
-            baseline_label = (
-                f"eBay Browse median (JP, n={br['sample_size']} of "
-                f"{br['raw_sample_size']}, range "
-                f"${br['low_usd']:.2f}-${br['high_usd']:.2f})"
-            )
-            extra_note = (
-                f"Trimmed-median of {br['sample_size']} relevant active "
-                f"listings from eBay (query: {br['query']!r}). Cardmarket "
-                f"EUR is often stale for newer JP sets."
-            )
-
-    # PriceCharting "Ungraded" — best for OLD cards where 1st Edition is its
-    # own product (different page slug), and for JP cards where Cardmarket
-    # is consistently stale. Also try for any card with variant context.
-    if nm_price is None and req.name and (
-            req.language.lower() == "japanese" or _is_old_variant(req.variant)):
-        try:
-            pc_raw = await pricecharting_lookup.lookup_raw_price(
-                req.name, req.set_name or "", req.card_number or "",
-                language=req.language, variant=req.variant,
-            )
-        except Exception as e:
-            log.warning("PriceCharting raw lookup failed: %s", e)
-            pc_raw = None
-        if pc_raw and pc_raw.price_usd:
-            nm_price = float(pc_raw.price_usd)
-            baseline_label = (
-                f"PriceCharting Ungraded "
-                f"({'JP' if req.language.lower() == 'japanese' else req.variant or 'EN'})"
-            )
-
-    if nm_price is None:
-        base = await card_lookup.lookup_card(
-            req.name, req.set_name, req.card_number, language=req.language,
-            variant=req.variant,
-        )
-        if base and base.market_price:
-            nm_price = float(base.market_price)
-            variant_tag = f" / {req.variant}" if req.variant else ""
-            baseline_label = (
-                "Cardmarket EUR (JP)" if base.source == "cardmarket-jp"
-                else f"TCGplayer (EN{variant_tag})"
-            )
-
-    # Last-ditch second opinion for JP — eBay sold listings. May 403 from
-    # certain network egress points; that's why it's last and best-effort.
-    if nm_price is None and req.language.lower() == "japanese":
-        try:
-            ebay = await ebay_lookup.lookup_raw_price(
-                req.name, req.set_name or "", req.card_number or "",
-                language="japanese", condition="NM",
-            )
-        except Exception as e:
-            log.warning("eBay lookup failed for JP card: %s", e)
-            ebay = None
-        if ebay and ebay.median_usd:
-            nm_price = float(ebay.median_usd)
-            baseline_label = "eBay sold (JP-keyword)"
-            extra_note = (f"eBay sold-median n={ebay.sample_size}/{ebay.raw_sample_size}, "
-                          f"{ebay.period_days}d window")
+    # ----- baseline + PriceCharting sold-comp blend (raw or graded-fallback) -
+    result = await raw_price_resolver.resolve_raw_price(
+        req.name, req.set_name or "", req.card_number or "",
+        language=req.language, variant=req.variant,
+    )
+    nm_price = result.nm_price
+    baseline_label = result.baseline_label
+    extra_note = result.extra_note
 
     if nm_price is None:
         raise HTTPException(404, "no baseline market price found in any catalogue")
