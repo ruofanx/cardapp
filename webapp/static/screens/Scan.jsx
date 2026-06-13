@@ -716,11 +716,19 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
       }}>
         <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--ink-4)', margin: '4px auto 14px' }}/>
 
-        <div className="row gap-2" style={{ marginBottom: 10, color: 'var(--pos)' }}>
-          <Icon name="check" size={16} stroke={2.4}/>
-          <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-            {filtered.length} of {candidates.length} match{candidates.length === 1 ? '' : 'es'}
-          </span>
+        <div className="row" style={{ marginBottom: 10, alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>Matching Cards</div>
+            <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
+              {filtered.length} Result{filtered.length === 1 ? '' : 's'}
+            </div>
+          </div>
+          {capturedPhotoUrl && (
+            <img src={capturedPhotoUrl} alt="" style={{
+              width: 40, height: 56, objectFit: 'cover', borderRadius: 8,
+              border: '1px solid var(--hairline-soft)', flexShrink: 0,
+            }}/>
+          )}
         </div>
 
         {/* Filter chips */}
