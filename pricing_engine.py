@@ -250,23 +250,32 @@ _PRICE_RE = re.compile(r"\$\s*([\d,]+\.?\d*)")
 # extra spaces). We match it wherever it appears in an item block.
 _SOLD_DATE_RE = re.compile(r'Sold\s+([A-Z][a-z]{2}\s+\d{1,2},\s+\d{4})')
 
-# Price: try the current class name first, then common historical names, then
-# any bare dollar amount as a last resort.
+# Price: s-card__price is the 2026+ class name; s-item__price was used before.
 _ITEM_PRICE_RE = re.compile(
-    r'class="[^"]*s-item__price[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})'          # current
-    r'|class="[^"]*s-card__price[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})'         # legacy
+    r'class="[^"]*s-card__price[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})'          # 2026+
+    r'|class="[^"]*s-item__price[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})'         # pre-2026
     r'|class="[^"]*notranslate[^"]*"[^>]*>[^$<]*\$([\d,]+\.\d{2})',           # alt
 )
 
-# Title: role="heading" is the most stable anchor; fall back to known classes.
+# Title: anchor to s-card__title (2026+, unquoted class attr) or su-styled-text
+# primary (avoids the sold-date span which also uses su-styled-text but with
+# class "... positive default", not "... primary default"). role="heading" is
+# the pre-2026 anchor (quoted attr); s-item__title is even older.
+# NOTE: the old catch-all su-styled-text fallback was deliberately removed —
+# it matched the sold-date span (class="su-styled-text positive default") which
+# appears before the title span in each block, corrupting the title field.
 _ITEM_TITLE_RE = re.compile(
-    r'role="heading"[^>]*>([^<]{8,})</span>'
-    r'|class="[^"]*s-item__title[^"]*"[^>]*>[^<]*<span[^>]*>([^<]{8,})</span>'
-    r'|class="[^"]*su-styled-text[^"]*"[^>]*>([^<]{8,})</span>',
+    r'class=s-card__title[^>]*><span[^>]*>([^<]{8,})</span>'                   # 2026+ unquoted
+    r'|class="su-styled-text[^"]*\bprimary\b[^"]*"[^>]*>([^<]{8,})</span>'    # 2026+ specific
+    r'|role="heading"[^>]*>([^<]{8,})</span>'                                   # pre-2026
+    r'|class="[^"]*s-item__title[^"]*"[^>]*>[^<]*<span[^>]*>([^<]{8,})</span>'# older
 )
 
-# Item URL — href inside the item block's primary link.
-_ITEM_URL_RE = re.compile(r'href="(https://www\.ebay\.com/itm/[^"]+)"')
+# Item URL — 2026+ eBay uses unquoted href attrs; older HTML used quoted ones.
+_ITEM_URL_RE = re.compile(
+    r'href="(https://www\.ebay\.com/itm/[^"]+)"'            # pre-2026 (quoted)
+    r'|href=(https://www\.ebay\.com/itm/\S+?)(?=[\s>])',    # 2026+ (unquoted)
+)
 
 
 def parse_ebay_sold_html(html: str, period_days: int = 30) -> list[SaleRecord]:
@@ -279,10 +288,13 @@ def parse_ebay_sold_html(html: str, period_days: int = 30) -> list[SaleRecord]:
     cutoff = datetime.now() - timedelta(days=period_days)
     results: list[SaleRecord] = []
 
-    # Split on the start of each result item.  eBay wraps each hit in a <li>
-    # with class "s-item"; splitting on that boundary keeps extraction local.
-    # The first chunk is page chrome before the first item — skip it.
-    blocks = re.split(r'<li\b[^>]*\bclass="[^"]*s-item\b', html)
+    # Split on per-item boundaries. eBay 2026+ wraps each hit in a <div
+    # class=su-card-container--horizontal>; older HTML used <li class="s-item">.
+    # Try the new format first; fall back to the old one (keeps older mock HTML
+    # in tests working without modification).
+    blocks = re.split(r'su-card-container--horizontal', html)
+    if len(blocks) == 1:
+        blocks = re.split(r'<li\b[^>]*\bclass="[^"]*s-item\b', html)
 
     for block in blocks[1:]:
         # --- Sold date (required) ---
@@ -322,7 +334,7 @@ def parse_ebay_sold_html(html: str, period_days: int = 30) -> list[SaleRecord]:
 
         # --- URL (optional) ---
         um = _ITEM_URL_RE.search(block)
-        url = um.group(1).split("?")[0] if um else None  # strip tracking params
+        url = (um.group(1) or um.group(2)).split("?")[0] if um else None
 
         results.append(SaleRecord(
             price_usd=price, sold_date=sold_date, title=title,
