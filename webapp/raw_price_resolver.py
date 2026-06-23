@@ -69,12 +69,17 @@ async def _baseline_price(
             name, set_name, card_number, language=language, variant=variant,
         )
         if base and base.market_price:
-            nm_price = float(base.market_price)
-            variant_tag = f" / {variant}" if variant else ""
-            baseline_label = (
-                "Cardmarket EUR (JP)" if base.source == "cardmarket-jp"
-                else f"TCGplayer (EN{variant_tag})"
-            )
+            is_cardmarket_jp = base.source == "cardmarket-jp"
+            # For JP cards, TCGplayer (EN) prices reflect the English market,
+            # not the Japanese one — skip them so they don't pollute the JP
+            # baseline and trigger a false PriceCharting divergence override.
+            if not (language.lower() == "japanese" and not is_cardmarket_jp):
+                nm_price = float(base.market_price)
+                variant_tag = f" / {variant}" if variant else ""
+                baseline_label = (
+                    "Cardmarket EUR (JP)" if is_cardmarket_jp
+                    else f"TCGplayer (EN{variant_tag})"
+                )
 
     # Last-ditch second opinion for JP — eBay sold listings.
     if nm_price is None and language.lower() == "japanese":

@@ -1102,7 +1102,7 @@ function fmtChartDate(t) {
   return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function PricePointChart({ points, w = 358, h = 160 }) {
+function PricePointChart({ points, w = 358, h = 160, windowStart = null }) {
   // Hovered (desktop) or tapped (touch) dot index — shows a date+price tooltip.
   const [activeIdx, setActiveIdx] = React.useState(null);
   React.useEffect(() => { setActiveIdx(null); }, [points]);
@@ -1116,7 +1116,9 @@ function PricePointChart({ points, w = 358, h = 160 }) {
   const prices = points.map(d => d.p);
   const minP = Math.min(...prices);
   const maxP = Math.max(...prices);
-  const minT = points[0].t;
+  // Anchor x-axis to the range window start so the range picker is visually
+  // responsive even when all data falls in a small cluster near the right edge.
+  const minT = windowStart !== null ? Math.min(windowStart, points[0].t) : points[0].t;
   const maxT = points[points.length - 1].t;
   // 5% vertical padding so dots aren't clipped at edges
   const rawSpan = maxP - minP;
@@ -1142,11 +1144,16 @@ function PricePointChart({ points, w = 358, h = 160 }) {
   ).join(' ');
 
   // X-axis date labels: first, last, and up to 2 evenly-spaced points between.
+  // Dedup by pixel position (≥30px apart) to avoid overlap when data is clustered.
   const TICKS = Math.min(4, points.length);
   const tickIdxs = [...new Set(
     Array.from({ length: TICKS }, (_, i) =>
       Math.round(i * (points.length - 1) / Math.max(1, TICKS - 1)))
-  )];
+  )].reduce((acc, i) => {
+    const x = toX(points[i].t);
+    if (acc.length === 0 || x - acc[acc.length - 1].x >= 30) acc.push({ i, x });
+    return acc;
+  }, []);
 
   const active = activeIdx != null ? points[activeIdx] : null;
   const activeX = active ? toX(active.t) : 0;
@@ -1173,10 +1180,12 @@ function PricePointChart({ points, w = 358, h = 160 }) {
         <path d={linePath} fill="none" stroke="var(--accent)"
           strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
       )}
-      {/* X-axis date labels */}
-      {tickIdxs.map(i => {
-        const x = toX(points[i].t);
-        const anchor = i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle';
+      {/* X-axis date labels. Anchor is position-based (not index-based) so labels
+          render correctly when data is clustered at the right of a wide window. */}
+      {tickIdxs.map(({ i, x }) => {
+        const anchor = x <= pad.left + cw * 0.25 ? 'start'
+                     : x >= pad.left + cw * 0.75 ? 'end'
+                     : 'middle';
         return (
           <text key={`tick-${i}`} x={x.toFixed(1)} y={h - 6}
             textAnchor={anchor} className="mono"
@@ -1185,6 +1194,13 @@ function PricePointChart({ points, w = 358, h = 160 }) {
           </text>
         );
       })}
+      {/* Window-start label: shown when x-axis is wider than the data span */}
+      {windowStart !== null && toX(points[0].t) > pad.left + cw * 0.1 && (
+        <text x={pad.left} y={h - 6} textAnchor="start" className="mono"
+          style={{ fontSize: 9.5, fill: 'var(--ink-4)' }}>
+          {fmtChartDate(windowStart)}
+        </text>
+      )}
       {/* Price dots — hover (desktop) or tap (touch) to see date + price */}
       {points.map((pt, i) => (
         <g key={i}
@@ -1282,8 +1298,23 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
   }, [points, range]);
 
   const hasSoldData = chartPts.length > 0;
-  const activePts = hasSoldData ? chartPts : snapshotPts;
+  // Blend sold listings + price-history snapshots: snapshots provide historical
+  // context for 3M/1Y views while sold listings supply accurate recent pricing.
+  // Only include snapshots older than 60 days to avoid noisy duplicate points
+  // in the recent window where sold listings are more accurate.
+  const activePts = React.useMemo(() => {
+    if (!hasSoldData) return snapshotPts;
+    const cutoff60 = Date.now() - 60 * 86400000;
+    const historical = snapshotPts.filter(pt => pt.t < cutoff60);
+    return [...historical, ...chartPts].sort((a, b) => a.t - b.t);
+  }, [hasSoldData, chartPts, snapshotPts]);
   const hasSeries = activePts.length > 0;
+  // X-axis window start for the chart — anchors the time axis to the selected
+  // range so the range picker is visually responsive even with sparse data.
+  const chartWindowStart = React.useMemo(() => {
+    const days = range === '1W' ? 7 : range === '1M' ? 30 : range === '3M' ? 90 : range === '1Y' ? 365 : null;
+    return days ? Date.now() - days * 86400000 : null;
+  }, [range]);
   const min = hasSeries ? Math.min(...activePts.map(p => p.p)) : null;
   const max = hasSeries ? Math.max(...activePts.map(p => p.p)) : null;
   // Real price-quote metadata. _quote is attached by api.refreshPrice when
@@ -1309,7 +1340,7 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
           </div>
         ) : hasSeries ? (
           <>
-            <PricePointChart points={activePts} w={358} h={160}/>
+            <PricePointChart points={activePts} w={358} h={160} windowStart={chartWindowStart}/>
             <div className="mono" style={{ position: 'absolute', top: 4, right: 6, fontSize: 11, color: 'var(--ink-3)' }}>
               high {fmtUSD(max, { decimals: 0 })}
             </div>
@@ -1318,7 +1349,7 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
             </div>
             {!hasSoldData && (
               <div className="mono" style={{ position: 'absolute', bottom: 4, left: 6, fontSize: 10, color: 'var(--ink-4)' }}>
-                price snapshots
+                {`price snapshots · ${activePts.length}`}
               </div>
             )}
           </>
