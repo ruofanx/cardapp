@@ -2,6 +2,39 @@
 
 const { useState: useStateBrowse, useMemo: useMemoBrowse } = React;
 
+const GRADER_LOGOS = { PSA: 1, BGS: 1, CGC: 1, SGC: 1, HGA: 1 };
+
+function gradeLabel(grader, grade) {
+  if (grade === 10.5) {
+    if (grader === 'BGS') return 'Black Label';
+    return '10 Pristine';
+  }
+  return grade === Math.floor(grade) ? String(Math.floor(grade)) : String(grade);
+}
+
+function GradingBadge({ grader, grade }) {
+  if (!grader || grade == null) return null;
+  const key = grader?.toUpperCase();
+  const hasLogo = GRADER_LOGOS[key];
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      background: 'var(--bg-1)', border: '1px solid var(--hairline-soft)',
+      borderRadius: 6, padding: '3px 6px 3px 4px',
+      boxShadow: '0 1px 3px oklch(0 0 0 / 0.18)',
+    }}>
+      {hasLogo
+        ? <img src={`/grading-logos/${key.toLowerCase()}.svg`} alt={key}
+            style={{ height: 14, borderRadius: 2, display: 'block' }}/>
+        : <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.05em', color: 'var(--ink-2)' }}>{key}</span>
+      }
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+        {gradeLabel(grader, grade)}
+      </span>
+    </div>
+  );
+}
+
 // Backend returns tags as objects like {id, name, color, ...}; older mock data
 // has plain strings. Normalize to a name list per card.
 function tagNamesOf(card) {
@@ -257,6 +290,9 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                     </div>
                   )}
                 </div>
+                {c.is_graded && c.grader && c.grade != null && (
+                  <GradingBadge grader={c.grader} grade={c.grade} />
+                )}
                 <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
                 <div className="mono" style={{ fontSize: 9, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {[c.code, c.set].filter(Boolean).join(' · ')}
@@ -286,6 +322,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                   <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
                     {c.code} · {c.set} · {c.lang} · {c.condition}
                   </div>
+                  {c.is_graded && c.grader && c.grade != null && (
+                    <div style={{ marginTop: 3 }}>
+                      <GradingBadge grader={c.grader} grade={c.grade} />
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>

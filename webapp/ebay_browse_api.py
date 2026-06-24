@@ -26,6 +26,7 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -216,6 +217,7 @@ async def median_relevant_price(
     grade: Optional[float] = None,
     sample_size: int = 8,
     marketplace: str = DEFAULT_MARKETPLACE,
+    sort: Optional[str] = None,
 ) -> Optional[dict]:
     """Trim-median of active-listing prices for this card.
 
@@ -250,7 +252,7 @@ async def median_relevant_price(
 
     # Over-fetch so the filter step has room to drop irrelevant titles
     items = await search_items(query, limit=max(sample_size * 2, 20),
-                                marketplace=marketplace)
+                                marketplace=marketplace, sort=sort)
     if not items:
         return None
 
@@ -266,12 +268,22 @@ async def median_relevant_price(
             continue
         if num_str and num_str not in t:
             continue
+        # Drop bulk lot listings — "156" in a title often refers to the lot
+        # quantity ("Sylveon ex Japanese 156-card lot"), not the card number.
+        if any(kw in t for kw in (" lot", " bulk", " bundle", "x lot", " set of")):
+            continue
+        if re.search(r'\b\d+\s*cards?\b', t) and "1 card" not in t:
+            continue
         # If the user is searching for the JP version, drop Korean
         # listings (they're a different print with different prices).
         if language.lower() == "japanese" and "korean" in t:
             continue
-        # Drop graded listings unless the user explicitly wanted graded
-        if not grade_company and any(g in t for g in ("psa ", "cgc ", "bgs ", "sgc ")):
+        # Drop graded listings unless the user explicitly wanted graded.
+        # (?<!\w) catches "PSA10" (no space) as well as "PSA 10".
+        # TAG/ACE are JP graders. "graded" catches generic grading language.
+        if not grade_company and re.search(
+            r'(?<!\w)(psa|cgc|bgs|sgc|tag\s*\d|ace\s*\d|graded)\b', t
+        ):
             continue
         if grade_company and grade_company.lower() not in t:
             continue

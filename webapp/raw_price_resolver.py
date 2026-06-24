@@ -51,6 +51,29 @@ async def _baseline_price(
         except Exception as e:
             log.warning("eBay Browse median lookup failed: %s", e)
             br = None
+
+        # Fallback for JP cards where the primary query (using the EN card number)
+        # returns nothing or clearly wrong-tier listings. JP sellers use JP set
+        # numbering, so "156" finds cheap cards that coincidentally have that
+        # number. Retry with just name + "Japanese", larger sample, no number
+        # filter — the trimmed median of raw ungraded listings then approximates
+        # the actual JP market price for that card.
+        cn_digits = (card_number or "").split("/")[0].strip()
+        is_sir_range = cn_digits.isdigit() and int(cn_digits) > 130
+        primary_looks_wrong = (
+            br is None
+            or (is_sir_range and br["median_usd"] < 50)
+        )
+        if primary_looks_wrong:
+            try:
+                br = await ebay_browse_api.median_relevant_price(
+                    name, set_name=None, card_number=None,
+                    language="japanese", sample_size=20,
+                )
+            except Exception as e:
+                log.warning("eBay Browse JP fallback failed: %s", e)
+                br = None
+
         if br and br["median_usd"]:
             nm_price = float(br["median_usd"])
             baseline_label = (
