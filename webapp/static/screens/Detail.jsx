@@ -159,6 +159,8 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   // Edit-sheet state (only shown for cards already in the collection).
   const [editing, setEditing] = useStateDetail(false);
   const [editPrice, setEditPrice] = useStateDetail('');
+  const [editSetName, setEditSetName] = useStateDetail('');
+  const [editCardNumber, setEditCardNumber] = useStateDetail('');
   const [editTags, setEditTags] = useStateDetail([]);
   const [newTag, setNewTag] = useStateDetail('');
   const [savingEdit, setSavingEdit] = useStateDetail(false);
@@ -393,6 +395,8 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
 
   const openEdit = () => {
     setEditPrice(c.purchase_price != null ? String(c.purchase_price) : '');
+    setEditSetName(c.set || '');
+    setEditCardNumber(c.code || '');
     setEditTags(normalizeTagList(c.tags));
     setNewTag('');
     setEditing(true);
@@ -418,6 +422,10 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     if (nextPrice !== c.purchase_price && !(nextPrice == null && c.purchase_price == null)) {
       fields.purchase_price = nextPrice;
     }
+    const nextSet = editSetName.trim();
+    if (nextSet && nextSet !== c.set) fields.set_name = nextSet;
+    const nextNum = editCardNumber.trim();
+    if (nextNum !== (c.code || '')) fields.card_number = nextNum || null;
     const origTags = normalizeTagList(c.tags);
     const tagsChanged = origTags.length !== editTags.length
       || origTags.some((t, i) => t !== editTags[i]);
@@ -592,6 +600,40 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
             <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 2 }}>Edit details</div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 18 }}>
               {c.name || 'This card'} · {c.code || ''}
+            </div>
+
+            {/* Set name + Card number */}
+            <div className="row gap-2" style={{ marginBottom: 16 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Set
+                </div>
+                <input
+                  value={editSetName}
+                  onChange={e => setEditSetName(e.target.value)}
+                  placeholder="Set name…"
+                  style={{
+                    width: '100%', background: 'var(--bg-2)', color: 'var(--ink)',
+                    border: '1px solid var(--hairline-soft)', borderRadius: 10,
+                    padding: '10px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <div style={{ width: 90 }}>
+                <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Card #
+                </div>
+                <input
+                  value={editCardNumber}
+                  onChange={e => setEditCardNumber(e.target.value)}
+                  placeholder="e.g. 156"
+                  style={{
+                    width: '100%', background: 'var(--bg-2)', color: 'var(--ink)',
+                    border: '1px solid var(--hairline-soft)', borderRadius: 10,
+                    padding: '10px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
             </div>
 
             {/* Purchase price */}
