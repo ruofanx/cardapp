@@ -35,7 +35,26 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import db
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
+
+try:
+    import db_postgres as db
+except Exception:
+    import db  # local SQLite fallback during development
+
+from supabase_storage import is_configured as _storage_configured, get_signed_url as _sign_photo
+
+def _resolve_photo(d: dict) -> dict:
+    """Rewrite Supabase storage paths to signed URLs in serialized card dicts."""
+    path = d.get("photo_path")
+    if path and _storage_configured() and not path.startswith("/uploads") and not path.startswith("http"):
+        try:
+            d["photo_path"] = _sign_photo(path)
+        except Exception:
+            pass
+    return d
+
 from trade_proposer import propose_trades
 import card_lookup
 import pricecharting_lookup
@@ -460,6 +479,17 @@ async def upload_card_photo(card_id: int, photo: UploadFile = File(...)):
     # serves the file from the same directory.
     public_url = f"/uploads/{fname}"
     db.update_card(card_id, photo_path=public_url)
+
+    # Upload to Supabase Storage if configured (cloud deployment)
+    from supabase_storage import is_configured, upload_photo
+    if is_configured():
+        storage_path = f"cards/{card_id}/{fname}"
+        try:
+            upload_photo(storage_path, raw, content_type=photo.content_type or "image/jpeg")
+            db.update_card(card_id, photo_path=storage_path)
+        except Exception as e:
+            log.warning("Supabase Storage upload failed, keeping local path: %s", e)
+
     return _card_to_dict(db.get_card(card_id))
 
 
