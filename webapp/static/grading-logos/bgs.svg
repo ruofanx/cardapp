@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 28">
+  <!-- BGS black background -->
+  <rect width="72" height="28" fill="#111111" rx="2"/>
+  <!-- Gold accent line at top -->
+  <rect x="0" y="0" width="72" height="3" fill="#C9A227" rx="2"/>
+  <!-- BGS text in gold -->
+  <text x="36" y="21" text-anchor="middle" fill="#C9A227"
+    font-family="Arial Black, Impact, sans-serif"
+    font-weight="900" font-size="15" letter-spacing="2">BGS</text>
+</svg>

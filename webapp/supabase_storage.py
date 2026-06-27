@@ -10,7 +10,7 @@ import os
 import requests
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
 
 _SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 _SERVICE_KEY  = os.environ.get("SUPABASE_SERVICE_KEY", "")

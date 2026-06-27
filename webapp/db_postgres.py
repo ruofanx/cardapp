@@ -16,7 +16,7 @@ import psycopg2
 import psycopg2.extras
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
 
 _DATABASE_URL = os.environ.get("DATABASE_URL")
 

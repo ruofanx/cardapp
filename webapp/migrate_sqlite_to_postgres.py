@@ -94,7 +94,7 @@ def migrate(sqlite_path: str, dry_run: bool = False):
             image_url=c["image_url"],
             photo_path=c["photo_path"],
             notes=c["notes"],
-            product_type=c.get("product_type", "card"),
+            product_type=dict(c).get("product_type") or "card",
         ))
         card_id_map[c["id"]] = new_card.id
         print(f"  ✓ card '{c['name']}' → pg id {new_card.id}")
@@ -121,7 +121,7 @@ def migrate(sqlite_path: str, dry_run: bool = False):
         pg_card_id = card_id_map.get(ph["card_id"])
         if pg_card_id:
             pg.log_price(pg_card_id, float(ph["price_usd"]),
-                         source=ph.get("source"), at=ph["recorded_at"])
+                         source=dict(ph).get("source"), at=ph["recorded_at"])
             logged += 1
     print(f"  ✓ {logged} price history rows logged")
 
