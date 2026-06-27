@@ -20,6 +20,15 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../.env"))
 
 _DATABASE_URL = os.environ.get("DATABASE_URL")
 
+_CARD_COLUMNS = frozenset({
+    "name", "set_name", "card_number", "language", "variant", "condition",
+    "is_graded", "grade_company", "grade", "purchase_price", "purchase_date",
+    "current_market_price", "last_priced_at", "image_url", "photo_path",
+    "notes", "product_type",
+})
+
+_TAG_COLUMNS = frozenset({"name", "color", "is_trade_tag"})
+
 
 @contextmanager
 def connect():
@@ -250,6 +259,9 @@ def create_card(card: Card) -> Card:
 def update_card(card_id: int, **changes) -> Optional[Card]:
     if not changes:
         return get_card(card_id)
+    unknown = set(changes) - _CARD_COLUMNS
+    if unknown:
+        raise ValueError(f"unknown card columns: {unknown}")
     cols = ", ".join(f"{k} = %s" for k in changes)
     with connect() as conn:
         cur = conn.cursor()
@@ -341,26 +353,37 @@ def get_price_history(card_id: int, *, since: Optional[str] = None,
                       limit: Optional[int] = None) -> list[dict]:
     with connect() as conn:
         cur = conn.cursor()
-        if since:
+        if since and limit:
+            rows = _fetchall(cur,
+                "SELECT recorded_at, price_usd, source, source_url FROM price_history "
+                "WHERE card_id = %s AND recorded_at >= %s ORDER BY recorded_at DESC LIMIT %s",
+                (card_id, since, limit),
+            )
+            rows = list(reversed(rows))
+        elif since:
             rows = _fetchall(cur,
                 "SELECT recorded_at, price_usd, source, source_url FROM price_history "
                 "WHERE card_id = %s AND recorded_at >= %s ORDER BY recorded_at ASC",
                 (card_id, since),
             )
+        elif limit:
+            rows = _fetchall(cur,
+                "SELECT recorded_at, price_usd, source, source_url FROM price_history "
+                "WHERE card_id = %s ORDER BY recorded_at DESC LIMIT %s",
+                (card_id, limit),
+            )
+            rows = list(reversed(rows))
         else:
             rows = _fetchall(cur,
                 "SELECT recorded_at, price_usd, source, source_url FROM price_history "
                 "WHERE card_id = %s ORDER BY recorded_at ASC",
                 (card_id,),
             )
-        out = [{"at": r["recorded_at"].isoformat() if hasattr(r["recorded_at"], "isoformat") else r["recorded_at"],
-                "price": float(r["price_usd"]),
-                "source": r["source"],
-                "source_url": r["source_url"]}
-               for r in rows]
-        if limit and len(out) > limit:
-            out = out[-limit:]
-        return out
+        return [{"at": r["recorded_at"].isoformat() if hasattr(r["recorded_at"], "isoformat") else r["recorded_at"],
+                 "price": float(r["price_usd"]),
+                 "source": r["source"],
+                 "source_url": r["source_url"]}
+                for r in rows]
 
 
 def backfill_price_history() -> int:
@@ -448,6 +471,9 @@ def delete_tag(tag_id: int) -> bool:
 def update_tag(tag_id: int, **changes) -> Optional[Tag]:
     if not changes:
         return get_tag(tag_id)
+    unknown = set(changes) - _TAG_COLUMNS
+    if unknown:
+        raise ValueError(f"unknown tag columns: {unknown}")
     cols = ", ".join(f"{k} = %s" for k in changes)
     with connect() as conn:
         cur = conn.cursor()
