@@ -39,7 +39,7 @@
 - Capacitor wraps the Vite-built React app for iOS + Android
 
 **What stays the same:**
-- All FastAPI routes (minimal changes)
+- All FastAPI route business logic (routes get auth middleware added, but logic is unchanged)
 - All React screens (Browse, Scan, Detail, Trade, etc.)
 - Pricing engines (eBay, PriceCharting, TCGdex)
 - Trade proposer logic
@@ -80,7 +80,7 @@ A family signs up once with one email. The parent is the billing owner. Child pr
 
 ### Tiers
 
-| Feature | Free | Family/Pro ($4.99–$7.99/mo) |
+| Feature | Free | Family/Pro |
 |---|---|---|
 | Profiles | 1 | Unlimited |
 | Card scans (OCR) | 20/month | Unlimited |
@@ -90,6 +90,12 @@ A family signs up once with one email. The parent is the billing owner. Child pr
 | Portfolio analytics | — | ✓ |
 | Collection export (CSV/PDF) | — | ✓ |
 | Ads | Shown | Hidden |
+
+### Pricing
+- **$3.99/month** or **$29.99/year** (~$2.49/mo — save 37%)
+- **14-day free trial** on sign-up — full paid access, no credit card required upfront
+- Trial converts to paid automatically; users can cancel before day 14 with no charge
+- Positions well below CollX Pro ($9.99/mo) — easy upgrade decision at a trade show
 
 ### Payment Infrastructure
 - **RevenueCat** handles iOS IAP, Google Play billing, and Stripe (web) in one SDK
