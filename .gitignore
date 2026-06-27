@@ -19,3 +19,6 @@ webapp/testfile.txt
 .DS_Store
 *.heic
 *.HEIC
+
+# Environment variables
+.env
