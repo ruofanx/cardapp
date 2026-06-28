@@ -587,4 +587,4 @@ def increment_scan_count(account_id: str, month: str) -> int:
             "RETURNING scan_count",
             (account_id, month),
         )
-        return cur.fetchone()[0]
+        return cur.fetchone()["scan_count"]
