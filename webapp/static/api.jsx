@@ -30,6 +30,11 @@
   function defaultBase() {
     if (typeof window !== 'undefined' && window.POKECOLLECT_API) return window.POKECOLLECT_API;
     if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+      const port = window.location.port;
+      // On Railway (port 443/80), use origin as-is; on local dev use :8000
+      if (!port || port === '80' || port === '443') {
+        return `${window.location.protocol}//${window.location.hostname}`;
+      }
       return `${window.location.protocol}//${window.location.hostname}:8000`;
     }
     return 'http://localhost:8000';
