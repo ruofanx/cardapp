@@ -1,11 +1,22 @@
 from __future__ import annotations
+import functools
 import logging
 import os
 from fastapi import Header, HTTPException, status
+import requests as _requests
 
 log = logging.getLogger(__name__)
 
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+
+
+@functools.lru_cache(maxsize=1)
+def _jwks() -> list:
+    """Fetch and cache Supabase's public JWKS. Called once per process."""
+    url = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+    resp = _requests.get(url, timeout=10)
+    resp.raise_for_status()
+    return resp.json().get("keys", [])
 
 
 async def get_current_account(authorization: str | None = Header(default=None)) -> dict:
@@ -15,15 +26,23 @@ async def get_current_account(authorization: str | None = Header(default=None)) 
     token = authorization.removeprefix("Bearer ")
     try:
         from jose import jwt as jose_jwt
-        payload = jose_jwt.decode(
-            token,
-            SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
+        keys = _jwks()
+        payload = None
+        for key in keys:
+            try:
+                payload = jose_jwt.decode(
+                    token, key,
+                    algorithms=[key.get("alg", "ES256")],
+                    options={"verify_aud": False},
+                )
+                break
+            except Exception:
+                continue
+        if payload is None:
+            raise ValueError("no key matched")
         uid = payload.get("sub")
         if not uid:
-            raise ValueError("no sub")
+            raise ValueError("no sub claim")
     except Exception as exc:
         log.debug("JWT decode failed: %s", type(exc).__name__)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
