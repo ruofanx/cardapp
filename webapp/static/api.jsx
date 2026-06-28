@@ -689,7 +689,7 @@
     // normalized cards. `lang` selects database: 'en' (default) or 'ja'.
     async searchTCGdex(filters = {}, { pageSize = 20, lang = 'en', dbLang } = {}) {
       if (!filters.name) return [];
-      const cleanName = String(filters.name).replace(/"/g, '').trim();
+      const cleanName = String(filters.name).replace(/"/g, '').trim().toLowerCase();
       if (!cleanName) return [];
       // dbLang controls which TCGdex language database to hit (defaults to
       // `lang`). Useful when querying JA/CH dbs with localized names while
