@@ -754,6 +754,17 @@ async def search_cards(query: str, limit: int = 20,
                 log.info("typo fallback: %r → %r matched %d cards",
                          raw, stem, len(items))
 
+        # First-word fallback: queries like "charmander first partner 30th" have
+        # extra words that don't appear in card names. Drop everything after the
+        # first word and retry. Only fires if name_part is multi-word AND still
+        # empty after the typo fallback.
+        if not items and not is_alias and ' ' in name_part:
+            first_word = name_part.split()[0]
+            items = await fetch(f'name:"{first_word}*"')
+            if items:
+                log.info("first-word fallback: %r → %r matched %d cards",
+                         raw, first_word, len(items))
+
     # Client-side re-rank by name closeness to the original query
     items.sort(key=lambda c: _name_score(raw, c.get("name", "")), reverse=True)
 
