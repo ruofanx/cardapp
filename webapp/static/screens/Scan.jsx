@@ -583,46 +583,13 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const [setFilter, setSetFilter] = useStateScan('');
   const [rarityFilter, setRarityFilter] = useStateScan('');
   const [langFilter, setLangFilter] = useStateScan('');
-  // Default TYPE filter to whatever the top match is, so a sealed-product
-  // scan opens straight onto sealed results (and vice versa for cards).
   const [typeFilter, setTypeFilter] = useStateScan(() =>
     window.api?.isSealedProduct?.(candidates[0]) ? 'sealed' : 'card');
-  // --- Edit-details state for the selected candidate ---
-  const [condition, setCondition] = useStateScan('NM');
-  const [lang, setLang]           = useStateScan('EN');
-  const [grader, setGrader]       = useStateScan('Raw');
-  const [grade, setGrade]         = useStateScan(10);
-  // Manual price override — when user fills this in from eBay sold listings,
-  // it bypasses the auto-computed adjusted price.
-  const [manualPrice, setManualPrice] = useStateScan('');
-  // What the user actually paid for this card (cost basis, separate from
-  // market value). Used for gain/loss tracking on Home/Detail.
-  const [purchasePrice, setPurchasePrice] = useStateScan('');
-  // Comma-separated user tags (e.g. "favorite, trade-bait, sleeve").
-  const [tagsInput, setTagsInput] = useStateScan('');
-  // In-flight guard for "Add to Collection" — disables the button and
-  // prevents double-submits while the request is pending.
   const [isAdding, setIsAdding] = useStateScan(false);
-  // Live NM-raw quote — overrides the candidate's `usd` (from TCGdex
-  // Cardmarket EUR for JP/CH, which is often stale/off by 5-10x for newer
-  // JP sets) with the backend's eBay/PriceCharting-backed estimate.
-  const [quotedUSD, setQuotedUSD] = useStateScan(null);
-  const [quoting, setQuoting]     = useStateScan(false);
-  // Server-computed graded price — when the user picks a grader+grade, fetch
-  // the backend's graded estimate (PriceCharting first, then eBay Browse with
-  // grade qualifier "PSA 9 … Japanese"). This is far more accurate than
-  // applying a static multiplier to the raw Cardmarket EUR price, especially
-  // for iconic JP slabs like Wild Blaze M Charizard EX where the market for
-  // PSA 9 ($180-$358) bears no relationship to 1.6× Cardmarket EUR ($44).
-  const [gradedQuoteUSD, setGradedQuoteUSD] = useStateScan(null);
-  const [gradedQuoting, setGradedQuoting]   = useStateScan(false);
 
-  // Build filter option lists from the candidate set.
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
   const setOptions    = uniq(candidates.map(c => c.set));
   const rarityOptions = uniq(candidates.map(c => c.variant || c._rarity));
-  // Only offer the TYPE toggle when the candidate set actually mixes
-  // individual cards and sealed products — otherwise it'd be a no-op chip.
   const hasCardCandidates   = candidates.some(c => !window.api?.isSealedProduct?.(c));
   const hasSealedCandidates = candidates.some(c => window.api?.isSealedProduct?.(c));
   const showTypeFilter = hasCardCandidates && hasSealedCandidates;
@@ -633,91 +600,28 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
       if (typeFilter === 'card'   && sealed)  return false;
       if (typeFilter === 'sealed' && !sealed) return false;
     }
-    if (setFilter    && c.set                  !== setFilter)    return false;
+    if (setFilter    && c.set                    !== setFilter)    return false;
     if (rarityFilter && (c.variant || c._rarity) !== rarityFilter) return false;
     if (langFilter   && (c.lang || 'EN')         !== langFilter)   return false;
     return true;
   });
-  // Always present the language options so user can pick even when only one
-  // is available (it's a guarantee the engine looked across all three).
   const langOptions = ['EN', 'JP', 'CH'];
-  // Clamp picked into bounds whenever filters change.
   const safePicked = Math.min(picked, Math.max(0, filtered.length - 1));
   const card = filtered[safePicked] || filtered[0] || candidates[0];
 
-  // When the picked candidate has a non-EN print language, default the
-  // editor's LANG to match so the adjusted price comes out right.
-  React.useEffect(() => {
-    if (!card) return;
-    if (card.lang === 'JP') setLang('JP');
-    else if (card.lang === 'CH') setLang('CH');
-    setManualPrice(''); // clear override when picking a different candidate
-    setPurchasePrice('');
-    setTagsInput('');
-  }, [card?.id, card?.lang]);
+  const fallbackImage = capturedPhotoUrl || card?.raw?.image_url || card?.raw?.image || null;
+  const cardForHero = card && !card.image_url ? { ...card, image_url: fallbackImage } : card;
 
-  // JP/CH candidates' `usd` comes from TCGdex Cardmarket EUR pricing, which
-  // is frequently stale for newer JP sets (often off by 5-10x — see
-  // /api/refresh-price's JP fallback chain). Fetch a live NM-raw quote
-  // (eBay Browse median / PriceCharting JP) to use as the base price instead.
-  React.useEffect(() => {
-    setQuotedUSD(null);
-    if (!card || card.lang === 'EN' || !window.api?.quotePrice) return;
-    let cancelled = false;
-    setQuoting(true);
-    window.api.quotePrice({ ...card, condition: 'NM', is_graded: false, grader: null, grade: null })
-      .then(res => {
-        if (cancelled) return;
-        const p = res?.estimated_price;
-        if (p != null && Number.isFinite(Number(p))) setQuotedUSD(Number(p));
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setQuoting(false); });
-    return () => { cancelled = true; };
-  }, [card?.id]);
-
-  // Graded price: fetch from backend when user picks a grader+grade. Uses
-  // PriceCharting graded prices for EN cards, and eBay Browse with grade
-  // qualifier for JP/CH cards where PriceCharting has no data.
-  const isGraded = grader !== 'Raw';
-  React.useEffect(() => {
-    setGradedQuoteUSD(null);
-    if (!card || !isGraded || !grader || grader === 'Raw' || !grade || !window.api?.quotePrice) return;
-    let cancelled = false;
-    setGradedQuoting(true);
-    window.api.quotePrice({ ...card, lang: card.lang || lang, condition: 'NM', is_graded: true, grader, grade })
-      .then(res => {
-        if (cancelled) return;
-        const p = res?.estimated_price;
-        if (p != null && Number.isFinite(Number(p))) setGradedQuoteUSD(Number(p));
-      })
-      .catch(() => {})
-      .finally(() => { if (!cancelled) setGradedQuoting(false); });
-    return () => { cancelled = true; };
-  }, [card?.id, isGraded, grader, grade]);
-  const hasBase  = quotedUSD != null || (card?.usd != null && Number.isFinite(Number(card.usd)));
-  const baseUSD  = quotedUSD != null ? quotedUSD : (hasBase ? Number(card.usd) : null);
-  // LANG_MULT projects an EN-priced card onto a JP/CH market estimate — only
-  // meaningful when the base price's language differs from the selected one.
-  // When `lang` matches the candidate's own language, baseUSD is already
-  // priced for that market (skip it to avoid double-discounting).
-  const langMult = (lang === card?.lang) ? 1 : (LANG_MULT[lang] || 1);
-  // When graded and the backend returned a live graded price, use it directly
-  // (PriceCharting / eBay Browse with grade qualifier). Otherwise fall back to
-  // the raw base × static multiplier — a reasonable estimate while the quote
-  // is still loading or for less common cards with no live data.
-  const autoAdj  = isGraded && gradedQuoteUSD != null
-    ? gradedQuoteUSD
-    : hasBase
-      ? baseUSD
-        * (CONDITION_MULT[isGraded ? 'NM' : condition] || 1)
-        * langMult
-        * (isGraded ? (GRADE_MULT[grade] || 1) : 1)
-      : null;
-  // Manual override wins if provided.
-  const manualNum = Number(manualPrice);
-  const useManual = manualPrice !== '' && Number.isFinite(manualNum) && manualNum >= 0;
-  const adjUSD    = useManual ? manualNum : autoAdj;
+  const defaultCardProps = card ? {
+    condition: 'NM',
+    lang: card.lang || 'EN',
+    grader: null,
+    grade: null,
+    is_graded: false,
+    usd: card.usd,
+    purchase_price: null,
+    tags: [],
+  } : {};
 
   const Chip = ({ active, onClick, children }) => (
     <button className="tap" onClick={onClick} style={{
@@ -744,12 +648,14 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
         animation: 'riseIn 0.3s ease-out',
         zIndex: 6,
         boxShadow: '0 -20px 60px oklch(0 0 0 / 0.5)',
-        maxHeight: '85%',
-        display: 'flex', flexDirection: 'column',
+        maxHeight: '90%',
+        overflowY: 'auto',
+        display: 'flex', flexDirection: 'column', gap: 10,
       }}>
-        <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--ink-4)', margin: '4px auto 14px' }}/>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--ink-4)', margin: '4px auto 2px' }}/>
 
-        <div className="row" style={{ marginBottom: 10, alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        {/* Header */}
+        <div className="row" style={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>Matching Cards</div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
@@ -764,9 +670,47 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
           )}
         </div>
 
+        {/* Hero card — tap to open Detail for full editing */}
+        {card && (
+          <button className="tap col" onClick={() => onDetail({ ...card, ...defaultCardProps })}
+            style={{ alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0 }}>
+            <div style={{ position: 'relative' }}>
+              <CardArt card={cardForHero} renderMode={tweaks.cardRender} size="md"/>
+              <div style={{
+                position: 'absolute', top: 6, right: 6,
+                background: 'oklch(0 0 0 / 0.55)', backdropFilter: 'blur(8px)',
+                borderRadius: 6, padding: '3px 6px',
+                fontSize: 9, color: 'oklch(1 0 0 / 0.7)', fontWeight: 600,
+              }}>tap to edit ↗</div>
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <div className="row gap-2" style={{ justifyContent: 'center', alignItems: 'center' }}>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, flexShrink: 0,
+                  background: card.lang === 'JP' ? 'oklch(0.45 0.16 25)'
+                             : card.lang === 'CH' ? 'oklch(0.45 0.14 80)'
+                             : 'oklch(0.40 0.06 250)',
+                  color: '#fff', letterSpacing: '0.05em',
+                }}>{card.lang || 'EN'}</span>
+                <span style={{ fontSize: 15, fontWeight: 700 }}>{card.name}</span>
+              </div>
+              {!window.api?.isSealedProduct?.(card) && (
+                <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>
+                  {card.code}{card.set ? ` · ${card.set}` : ''}
+                </div>
+              )}
+              {(card.variant || card._rarity) && (
+                <div style={{ fontSize: 10, color: 'var(--ink-3)' }}>{card.variant || card._rarity}</div>
+              )}
+              <div style={{ marginTop: 4 }}>
+                <Price usd={card.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
+              </div>
+            </div>
+          </button>
+        )}
+
         {/* Filter chips */}
-        <div className="col gap-2" style={{ marginBottom: 10 }}>
-          {/* TYPE row — only shown when results mix cards and sealed products */}
+        <div className="col gap-2">
           {showTypeFilter && (
             <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
               <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>TYPE</div>
@@ -778,7 +722,6 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
               </Chip>
             </div>
           )}
-          {/* LANG row — always shown so user can switch between EN/JP/CH */}
           <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
             <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>LANG</div>
             <Chip active={!langFilter} onClick={() => setLangFilter('')}>All</Chip>
@@ -791,301 +734,76 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
               );
             })}
           </div>
-        </div>
-        {(setOptions.length > 1 || rarityOptions.length > 1) && (
-          <div className="col gap-2" style={{ marginBottom: 10 }}>
-            {setOptions.length > 1 && (
-              <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>SET</div>
-                <Chip active={!setFilter} onClick={() => setSetFilter('')}>All</Chip>
-                {setOptions.map(s => (
-                  <Chip key={s} active={setFilter === s} onClick={() => setSetFilter(s === setFilter ? '' : s)}>{s}</Chip>
-                ))}
-              </div>
-            )}
-            {rarityOptions.length > 1 && (
-              <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
-                <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>RARITY</div>
-                <Chip active={!rarityFilter} onClick={() => setRarityFilter('')}>All</Chip>
-                {rarityOptions.map(r => (
-                  <Chip key={r} active={rarityFilter === r} onClick={() => setRarityFilter(r === rarityFilter ? '' : r)}>{r}</Chip>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Scrollable results grid */}
-        <div style={{ overflowY: 'auto', flex: 1, marginRight: -16, paddingRight: 16 }}>
-          {filtered.length === 0 && (
-            <div style={{ padding: '24px 0', color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
-              No matches with these filters.
-            </div>
+          {(setOptions.length > 1 || rarityOptions.length > 1) && (
+            <>
+              {setOptions.length > 1 && (
+                <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>SET</div>
+                  <Chip active={!setFilter} onClick={() => setSetFilter('')}>All</Chip>
+                  {setOptions.map(s => (
+                    <Chip key={s} active={setFilter === s} onClick={() => setSetFilter(s === setFilter ? '' : s)}>{s}</Chip>
+                  ))}
+                </div>
+              )}
+              {rarityOptions.length > 1 && (
+                <div className="row" style={{ gap: 6, overflowX: 'auto', paddingBottom: 4, scrollbarWidth: 'none' }}>
+                  <div style={{ fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center', flexShrink: 0, marginRight: 4 }}>RARITY</div>
+                  <Chip active={!rarityFilter} onClick={() => setRarityFilter('')}>All</Chip>
+                  {rarityOptions.map(r => (
+                    <Chip key={r} active={rarityFilter === r} onClick={() => setRarityFilter(r === rarityFilter ? '' : r)}>{r}</Chip>
+                  ))}
+                </div>
+              )}
+            </>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-            {filtered.map((cand, i) => {
-              const active = i === safePicked;
-              // If we have no catalogued art for this printing, fall back to
-              // the user's own scan photo so they see THEIR actual card, not
-              // a misleading English/Japanese reprint.
-              // Last resort: normalizeCard nulls out EN-CDN art for JP/CH
-              // cards (api.jsx) to avoid showing the wrong-language print as
-              // the primary image — but a blank tile is worse than that
-              // EN art when there's no captured photo either, so fall back
-              // to the pre-strip `raw.image_url`.
-              const fallbackImage = capturedPhotoUrl || cand.raw?.image_url || cand.raw?.image || null;
-              const candForDisplay = cand.image_url ? cand : { ...cand, image_url: fallbackImage };
-              return (
-                <button key={cand.id || i} className="tap" onClick={() => setPicked(i)} style={{
-                  display: 'flex', flexDirection: 'column', gap: 6,
-                  padding: 10, borderRadius: 14, textAlign: 'left',
-                  background: active ? 'var(--bg-2)' : 'var(--bg-1)',
-                  border: `1px solid ${active ? 'var(--accent)' : 'var(--hairline-soft)'}`,
-                }}>
-                  <div style={{ position: 'relative', alignSelf: 'center' }}>
-                    <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="md" flat/>
-                    <div style={{
-                      position: 'absolute', top: -6, right: -6,
-                      width: 24, height: 24, borderRadius: 12,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: active ? 'var(--accent)' : 'var(--bg-3)',
-                      color: active ? 'var(--accent-ink)' : 'var(--ink-2)',
-                      border: '1px solid var(--hairline-soft)',
-                    }}>
-                      <Icon name="plus" size={14} stroke={2.4}/>
-                    </div>
-                  </div>
-                  <div className="row gap-2" style={{ alignItems: 'center' }}>
-                    <span style={{
-                      fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 4, flexShrink: 0,
-                      background: cand.lang === 'JP' ? 'oklch(0.45 0.16 25)'
-                                 : cand.lang === 'CH' ? 'oklch(0.45 0.14 80)'
-                                 : 'oklch(0.40 0.06 250)',
-                      color: '#fff',
-                      letterSpacing: '0.05em',
-                    }}>{cand.lang || 'EN'}</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{cand.name}</span>
-                  </div>
-                  {!window.api?.isSealedProduct?.(cand) && (
-                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                      {cand.code}{cand.set ? ` · ${cand.set}` : ''}
-                    </div>
-                  )}
-                  {(cand.variant || cand._rarity) && (
-                    <div style={{ fontSize: 10, color: 'var(--ink-3)' }}>{cand.variant || cand._rarity}</div>
-                  )}
-                  <div style={{ marginTop: 2 }}>
-                    {/* For the selected candidate, prefer the live NM-raw
-                        quote (same one driving ADJUSTED PRICE below) so the
-                        tile and the editor never show two different numbers
-                        for the same card. */}
-                    <Price usd={(active && quotedUSD != null) ? quotedUSD : cand.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
         </div>
 
-        {/* Edit details + adjusted price */}
-        {card && (
-          <div style={{
-            marginTop: 12, padding: 10, borderRadius: 14,
-            background: 'var(--bg-1)', border: '1px solid var(--hairline-soft)',
-            display: 'flex', flexDirection: 'column', gap: 8,
-          }}>
-            {/* Sealed product badge — shown instead of condition/grade fields */}
-            {window.api?.isSealedProduct(card) && (
-              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                <ProductTypeBadge type={card.product_type} />
-              </div>
-            )}
-            {/* Language */}
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>LANG</div>
-              <div style={{ display: 'flex', gap: 4, flex: 1 }}>
-                {['EN', 'JP', 'CH'].map(L => (
-                  <button key={L} className="tap" onClick={() => setLang(L)} style={{
-                    flex: 1, padding: '6px 0', borderRadius: 8,
-                    background: lang === L ? 'var(--bg-3)' : 'var(--bg-2)',
-                    color: lang === L ? 'var(--ink)' : 'var(--ink-3)',
-                    fontWeight: 600, fontSize: 12, border: lang === L ? '1px solid var(--accent)' : '1px solid transparent',
-                  }}>{L}</button>
-                ))}
-              </div>
-            </div>
-            {/* Condition (only when raw, and not a sealed product) */}
-            {!isGraded && !window.api?.isSealedProduct(card) && (
-              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>COND</div>
-                <div style={{ display: 'flex', gap: 4, flex: 1 }}>
-                  {CONDITIONS.map(C => (
-                    <button key={C} className="tap" onClick={() => setCondition(C)} style={{
-                      flex: 1, padding: '6px 0', borderRadius: 8,
-                      background: condition === C ? 'var(--bg-3)' : 'var(--bg-2)',
-                      color: condition === C ? 'var(--ink)' : 'var(--ink-3)',
-                      fontWeight: 600, fontSize: 11, border: condition === C ? '1px solid var(--accent)' : '1px solid transparent',
-                    }}>{C}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Grader (hidden for sealed products) */}
-            {!window.api?.isSealedProduct(card) && (
-              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>GRADE</div>
-                <div style={{ display: 'flex', gap: 4, flex: 1 }}>
-                  {GRADERS.map(G => (
-                    <button key={G} className="tap" onClick={() => setGrader(G)} style={{
-                      flex: 1, padding: '6px 0', borderRadius: 8,
-                      background: grader === G ? 'var(--bg-3)' : 'var(--bg-2)',
-                      color: grader === G ? 'var(--ink)' : 'var(--ink-3)',
-                      fontWeight: 600, fontSize: 11, border: grader === G ? '1px solid var(--accent)' : '1px solid transparent',
-                    }}>{G}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Grade number (only if graded, and not a sealed product) */}
-            {isGraded && !window.api?.isSealedProduct(card) && (
-              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-                <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>GRD #</div>
-                <div style={{ display: 'flex', gap: 4, flex: 1, overflowX: 'auto', scrollbarWidth: 'none' }}>
-                  {[10, 9.5, 9, 8.5, 8, 7, 6, 5, 4, 3, 2, 1].map(n => (
-                    <button key={n} className="tap" onClick={() => setGrade(n)} style={{
-                      flexShrink: 0, minWidth: 36, padding: '6px 8px', borderRadius: 8,
-                      background: grade === n ? 'var(--bg-3)' : 'var(--bg-2)',
-                      color: grade === n ? 'var(--ink)' : 'var(--ink-3)',
-                      fontWeight: 600, fontSize: 11, border: grade === n ? '1px solid var(--accent)' : '1px solid transparent',
-                    }}>{n}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Manual price override + eBay lookup */}
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>PRICE $</div>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0"
-                value={manualPrice}
-                onChange={e => setManualPrice(e.target.value)}
-                placeholder={hasBase ? `auto · ${fmtUSD(autoAdj || 0, { decimals: 2 }).replace('$','')}` : 'enter from eBay'}
-                style={{
-                  flex: 1, padding: '7px 10px', borderRadius: 8,
-                  background: 'var(--bg-2)', color: 'var(--ink)',
-                  border: `1px solid ${useManual ? 'var(--accent)' : 'transparent'}`,
-                  fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)',
-                  outline: 'none', minWidth: 0,
-                }}
-              />
-              <button className="tap" onClick={() => {
-                const url = window.api?.buildEbayUrl?.(card, { grader: isGraded ? grader : null, grade: isGraded ? grade : null });
-                if (url) window.open(url, '_blank', 'noopener,noreferrer');
-              }} style={{
-                flexShrink: 0, padding: '7px 10px', borderRadius: 8,
-                background: 'var(--bg-2)', color: 'var(--ink-2)',
-                fontSize: 11, fontWeight: 600, border: '1px solid var(--hairline-soft)',
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-              }} title="Open eBay sold-listings in a new tab">
-                eBay ↗
-              </button>
-            </div>
-
-            {/* Paid (cost basis) */}
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>PAID $</div>
-              <input
-                type="number"
-                inputMode="decimal"
-                step="0.01"
-                min="0"
-                value={purchasePrice}
-                onChange={e => setPurchasePrice(e.target.value)}
-                placeholder="what you paid (optional)"
-                style={{
-                  flex: 1, padding: '7px 10px', borderRadius: 8,
-                  background: 'var(--bg-2)', color: 'var(--ink)',
-                  border: '1px solid transparent',
-                  fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)',
-                  outline: 'none', minWidth: 0,
-                }}
-              />
-            </div>
-
-            {/* Tags */}
-            <div className="row" style={{ gap: 6, alignItems: 'center' }}>
-              <div style={{ width: 56, fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>TAGS</div>
-              <input
-                type="text"
-                value={tagsInput}
-                onChange={e => setTagsInput(e.target.value)}
-                placeholder="favorite, trade-bait, sleeve…"
-                style={{
-                  flex: 1, padding: '7px 10px', borderRadius: 8,
-                  background: 'var(--bg-2)', color: 'var(--ink)',
-                  border: '1px solid transparent',
-                  fontSize: 13, fontWeight: 500,
-                  outline: 'none', minWidth: 0,
-                }}
-              />
-            </div>
-
-            {/* Adjusted price */}
-            <div className="row" style={{ marginTop: 2, justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>
-                {useManual ? 'YOUR PRICE' : 'ADJUSTED PRICE'}
-                {(quoting || gradedQuoting) && <span style={{ textTransform: 'none', fontWeight: 400 }}> · quoting…</span>}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', opacity: (quoting || gradedQuoting) ? 0.6 : 1 }}>
-                <Price usd={adjUSD} currency={cur === 'BOTH' ? 'USD' : cur} size="md"/>
-                {hasBase && !useManual && adjUSD != null && Math.abs(adjUSD - baseUSD) > 0.005 && (
-                  <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)', textDecoration: 'line-through' }}>
-                    base {fmtUSD(baseUSD)}
-                  </span>
-                )}
-                {!hasBase && !useManual && (
-                  <span style={{ fontSize: 10, color: 'var(--ink-4)' }}>tap eBay to look up the real price</span>
-                )}
-              </div>
+        {/* Candidate filmstrip */}
+        {filtered.length === 0 ? (
+          <div style={{ padding: '16px 0', color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
+            No matches with these filters.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto', scrollbarWidth: 'none', marginLeft: -16, marginRight: -16, paddingLeft: 16, paddingRight: 16 }}>
+            <div style={{ display: 'flex', gap: 8, paddingBottom: 4 }}>
+              {filtered.map((cand, i) => {
+                const active = i === safePicked;
+                const candFallback = capturedPhotoUrl || cand.raw?.image_url || cand.raw?.image || null;
+                const candForDisplay = cand.image_url ? cand : { ...cand, image_url: candFallback };
+                return (
+                  <button key={cand.id || i} className="tap col" onClick={() => setPicked(i)} style={{
+                    alignItems: 'center', gap: 3,
+                    background: 'none', border: 'none', flexShrink: 0,
+                    padding: '4px 4px 6px', borderRadius: 10,
+                    outline: active ? '2px solid var(--accent)' : '2px solid transparent',
+                    outlineOffset: 1,
+                  }}>
+                    <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="sm" flat/>
+                    <div style={{
+                      fontSize: 8, color: active ? 'var(--ink)' : 'var(--ink-3)',
+                      fontWeight: active ? 700 : 400,
+                      width: 64, textAlign: 'center',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{cand.name}</div>
+                    <Price usd={cand.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="xs"/>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
 
-        {/* Action buttons.
-            Skip / Details / Wishlist / Add — Wishlist is icon-only to keep
-            the row legible on narrow phones. It writes the card to the
-            backend tagged `wishlist` (purchase_price null) instead of going
-            through the scan cart. */}
+        {/* Action bar — Done | Wishlist | Add to Collection (NM/EN/Raw defaults) */}
         {card && (
-          <div className="row gap-2" style={{ marginTop: 10 }}>
+          <div className="row gap-2">
             <button className="tap" onClick={onSkip} style={{
               flex: 1, height: 46, borderRadius: 14,
               background: 'var(--bg-2)', color: 'var(--ink)',
               fontWeight: 500, fontSize: 14,
             }}>Done</button>
-            <button className="tap" onClick={() => onDetail({ ...card, condition, lang, grader: isGraded ? grader : null, grade: isGraded ? grade : null, is_graded: isGraded, usd: adjUSD })} style={{
-              flex: 1, height: 46, borderRadius: 14,
-              background: 'var(--bg-2)', color: 'var(--ink)',
-              fontWeight: 500, fontSize: 14,
-            }}>Details</button>
             {onAddWishlist && (
               <button className="tap" title="Add to wishlist" aria-label="Add to wishlist"
-                onClick={() => {
-                  const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
-                  onAddWishlist({
-                    ...card,
-                    condition,
-                    lang,
-                    grader:    isGraded ? grader : null,
-                    grade:     isGraded ? grade  : null,
-                    is_graded: isGraded,
-                    usd:       adjUSD,
-                    tags,
-                  });
-                }}
+                onClick={() => onAddWishlist({ ...card, ...defaultCardProps })}
                 style={{
                   width: 46, height: 46, borderRadius: 14, flexShrink: 0,
                   background: 'var(--accent-soft)', color: 'var(--accent)',
@@ -1095,23 +813,12 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
               </button>
             )}
             <button className="tap" disabled={isAdding} onClick={async () => {
-              const paidNum = Number(purchasePrice);
-              const tags = tagsInput
-                .split(',')
-                .map(t => t.trim())
-                .filter(Boolean);
               setIsAdding(true);
               try {
                 await onAddToCollection({
                   ...card,
-                  condition,
-                  lang,
-                  grader: isGraded ? grader : null,
-                  grade:  isGraded ? grade  : null,
-                  is_graded: isGraded,
-                  usd: adjUSD,
-                  purchase_price: (purchasePrice !== '' && Number.isFinite(paidNum) && paidNum >= 0) ? paidNum : null,
-                  tags,
+                  ...defaultCardProps,
+                  ...(capturedPhotoFile ? { _capturedPhotoFile: capturedPhotoFile } : {}),
                 });
               } finally {
                 setIsAdding(false);
