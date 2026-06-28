@@ -20,16 +20,13 @@ import sys
 import os
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger(__name__)
 
-# Make the engine modules importable from the parent directory.
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,6 +41,7 @@ except Exception:
     import db  # local SQLite fallback during development
 
 from supabase_storage import is_configured as _storage_configured, get_signed_url as _sign_photo
+from auth import get_current_account, get_current_account_optional
 
 def _resolve_photo(d: dict) -> dict:
     """Rewrite Supabase storage paths to signed URLs in serialized card dicts."""
@@ -221,12 +219,15 @@ class TagAttach(BaseModel):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/users")
-def get_users():
-    return [u.__dict__ for u in db.list_users()]
+def get_users(account: dict | None = Depends(get_current_account_optional)):
+    users = db.list_users()
+    if account:
+        return [u.__dict__ for u in users if str(getattr(u, 'account_id', None)) == account["id"]]
+    return [u.__dict__ for u in users]  # unauthenticated fallback (local dev / migration period)
 
 
 @app.get("/api/users/{user_id}/portfolio")
-def get_portfolio(user_id: int):
+def get_portfolio(user_id: int, account: dict = Depends(get_current_account)):
     try:
         return db.portfolio_summary(user_id).__dict__
     except ValueError as e:
@@ -238,7 +239,7 @@ def get_portfolio(user_id: int):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/users/{user_id}/cards")
-def get_cards(user_id: int, tag_id: Optional[int] = None):
+def get_cards(user_id: int, tag_id: Optional[int] = None, account: dict = Depends(get_current_account)):
     cards = db.list_cards(user_id, tag_id=tag_id)
     return [_card_to_dict(c) for c in cards]
 
@@ -297,7 +298,7 @@ def detach_tag(card_id: int, tag_id: int):
 
 
 @app.post("/api/users/{user_id}/cards")
-def create_card(user_id: int, payload: CardCreate):
+def create_card(user_id: int, payload: CardCreate, account: dict = Depends(get_current_account)):
     if not db.get_user(user_id):
         raise HTTPException(404, f"unknown user_id {user_id}")
     # db.Card has no `tags` column — that's the join table. Strip before
@@ -320,7 +321,7 @@ def create_card(user_id: int, payload: CardCreate):
 
 
 @app.patch("/api/cards/{card_id}")
-def patch_card(card_id: int, payload: CardPatch):
+def patch_card(card_id: int, payload: CardPatch, account: dict = Depends(get_current_account)):
     # Use exclude_unset so the client can explicitly null a field (e.g.
     # "reset image_url to clear bad art that got attached during lookup").
     # Pre-exclude_unset behavior dropped every None, so it was impossible to
@@ -432,14 +433,14 @@ def _sync_card_tags(card: "db.Card", desired_names: list[str]):
 
 
 @app.delete("/api/cards/{card_id}")
-def delete_card(card_id: int):
+def delete_card(card_id: int, account: dict = Depends(get_current_account)):
     if not db.delete_card(card_id):
         raise HTTPException(404, "card not found")
     return {"deleted": True, "card_id": card_id}
 
 
 @app.post("/api/cards/{card_id}/photo")
-async def upload_card_photo(card_id: int, photo: UploadFile = File(...)):
+async def upload_card_photo(card_id: int, photo: UploadFile = File(...), account: dict = Depends(get_current_account)):
     """Save a user-uploaded photo of this physical card. Stored under
     uploads/, served via /uploads/<filename>. Replaces any prior upload.
     HEIC files are converted to JPEG so all browsers can display them."""
@@ -1342,7 +1343,22 @@ from fastapi import Request
 
 
 @app.post("/api/identify")
-async def identify(request: Request):
+async def identify(request: Request, account: dict | None = Depends(get_current_account_optional)):
+    FREE_SCAN_LIMIT = 20
+    if account:
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+        is_pro = account["plan"] == "pro" or (
+            account["trial_ends_at"] is not None
+            and account["trial_ends_at"] > datetime.now(timezone.utc)
+        )
+        if not is_pro:
+            count = db.get_scan_count(account["id"], month)
+            if count >= FREE_SCAN_LIMIT:
+                raise HTTPException(
+                    status_code=429,
+                    detail={"error": "scan_limit_reached", "limit": FREE_SCAN_LIMIT, "used": count},
+                )
+        db.increment_scan_count(account["id"], month)
     try:
         return await _identify_inner(request)
     except HTTPException:
