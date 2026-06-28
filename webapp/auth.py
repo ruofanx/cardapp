@@ -25,14 +25,16 @@ async def get_current_account(authorization: str | None = Header(default=None)) 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing token")
     token = authorization.removeprefix("Bearer ")
     try:
-        from jose import jwt as jose_jwt
+        from jose import jwk as jose_jwk, jwt as jose_jwt
         keys = _jwks()
         payload = None
-        for key in keys:
+        for key_dict in keys:
             try:
+                alg = key_dict.get("alg", "ES256")
+                constructed = jose_jwk.construct(key_dict, algorithm=alg)
                 payload = jose_jwt.decode(
-                    token, key,
-                    algorithms=[key.get("alg", "ES256")],
+                    token, constructed,
+                    algorithms=[alg],
                     options={"verify_aud": False},
                 )
                 break
