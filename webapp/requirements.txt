@@ -14,3 +14,4 @@ pillow-heif>=0.16
 psycopg2-binary>=2.9
 python-dotenv>=1.0
 requests>=2.31
+python-jose[cryptography]>=3.3

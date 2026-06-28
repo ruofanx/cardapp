@@ -534,3 +534,57 @@ def portfolio_summary(user_id: int) -> PortfolioSummary:
         bulk_count=bulk,
         untracked_count=untracked,
     )
+
+
+# ---------------------------------------------------------------------------
+# Accounts & scan usage
+# ---------------------------------------------------------------------------
+
+def get_account(uid: str) -> dict | None:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, email, plan, trial_ends_at FROM accounts WHERE id = %s", (uid,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"id": str(row[0]), "email": row[1], "plan": row[2], "trial_ends_at": row[3]}
+
+
+def create_account(uid: str, email: str) -> dict:
+    from datetime import datetime, timezone, timedelta
+    trial_ends = datetime.now(timezone.utc) + timedelta(days=14)
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO accounts (id, email, plan, trial_ends_at) VALUES (%s, %s, 'free', %s) "
+            "ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email "
+            "RETURNING id, email, plan, trial_ends_at",
+            (uid, email, trial_ends),
+        )
+        row = cur.fetchone()
+        return {"id": str(row[0]), "email": row[1], "plan": row[2], "trial_ends_at": row[3]}
+
+
+def get_scan_count(account_id: str, month: str) -> int:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT scan_count FROM scan_usage WHERE account_id = %s AND month = %s",
+            (account_id, month),
+        )
+        row = cur.fetchone()
+        return row[0] if row else 0
+
+
+def increment_scan_count(account_id: str, month: str) -> int:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO scan_usage (account_id, month, scan_count) VALUES (%s, %s, 1) "
+            "ON CONFLICT (account_id, month) DO UPDATE SET scan_count = scan_usage.scan_count + 1 "
+            "RETURNING scan_count",
+            (account_id, month),
+        )
+        return cur.fetchone()[0]
