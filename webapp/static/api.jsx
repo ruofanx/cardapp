@@ -351,7 +351,17 @@
       fd.append('photo', file);
       if (productTypeHint && productTypeHint !== 'auto') fd.append('product_type_hint', productTypeHint);
       const res = await request(P.identify(), { method: 'POST', body: fd });
-      // Flatten nested `identity` so normalizeCard can pick the right fields.
+      // If the backend found catalogue matches via broad search, use those so
+      // the widening phase in Scan.jsx has a real seed (name, set, image_url).
+      // Merge the OCR identity fields so grading/language info is preserved.
+      if (res?.candidates?.length > 0) {
+        const identity = res.identity || {};
+        return res.candidates
+          .map(c => normalizeCard({ ...identity, ...c }))
+          .filter(Boolean);
+      }
+      // No catalogue hit — normalise the raw OCR identity so the widening
+      // phase can still search by name and surface related printings.
       const flat = { ...(res?.identity || {}), ...res };
       const one = normalizeCard(flat);
       return one ? [one] : [];

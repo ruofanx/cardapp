@@ -61,8 +61,14 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
       if ((!found || found.length === 0) && !image && query.trim() && window.api?.searchTCGdex) {
         log('Widening (TCGdex)', `"${query.slice(0, 24)}" — no catalogue match`);
         const q = query.trim();
+        // TCGdex does exact-name matching. For EN queries the user often appends
+        // set/rarity modifiers ("bulbasaur first partner black star promo…") that
+        // aren't part of the Pokémon name — strip everything after the first word
+        // so we find "bulbasaur" instead of matching nothing. JP/ZH queries ARE
+        // the Pokémon name in full, so keep those unchanged.
+        const enName = q.split(/\s+/)[0];
         const fallbackTasks = [
-          ['TCGdex EN',    window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'en' })],
+          ['TCGdex EN',    window.api.searchTCGdex({ name: enName }, { pageSize: 15, lang: 'en' })],
           ['TCGdex JA',    window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ja', dbLang: 'ja' })],
           ['TCGdex ZH-TW', window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-tw' })],
           ['TCGdex ZH-CN', window.api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-cn' })],
