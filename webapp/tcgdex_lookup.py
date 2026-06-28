@@ -67,6 +67,18 @@ SET_NAME_ALIASES = {
     "crimson haze":                   "SV5a",
     "sv: crimson haze":               "SV5a",
     "クリムゾンヘイズ":               "SV5a",
+    # XY-era sets (2013-2016, JP 1st Edition era)
+    "wild blaze":                     "XY2",
+    "ワイルドブレイズ":              "XY2",
+    "flashfire":                      "XY2",   # EN name for same era
+    "rising fist":                    "XY3",
+    "ライジングフィスト":             "XY3",
+    "phantom gate":                   "XY4",
+    "ファントムゲート":               "XY4",
+    "collection x":                   "XY1a",
+    "コレクションx":                  "XY1a",
+    "collection y":                   "XY1b",
+    "コレクションy":                  "XY1b",
     # Common alt phrasings the LLM emits for already-mapped sets
     "terastal fes ex":                "SV8a",
     "battle partners ex":             "SV9",

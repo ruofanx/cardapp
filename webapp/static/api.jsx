@@ -745,24 +745,40 @@
         // TCGdex images need a size+ext suffix; high.png is highest quality.
         const img = hit.image ? `${hit.image}/high.png` : null;
         const langTag = isJA ? 'japanese' : (isZH ? 'chinese' : 'english');
-        out.push(normalizeCard({
-          id: `tcgdex-${db}-${hit.id}`,
-          name: hit.name,
-          card_number: hit.localId || hit.id?.split('-').pop() || '',
-          set_name: hit.set?.name || '',
-          language: langTag,
-          condition: 'NM',
-          is_graded: false,
-          variant: hit.rarity || null,
-          hp: hit.hp || null,
-          image_url: img,
-          current_market_price: price,
-          last_priced_at: cm?.updated || null,
-          _set_release: hit.set?.releaseDate,
-          _set_id:      hit.set?.id,
-          _rarity:      hit.rarity,
-          _source:      'tcgdex',
-        }));
+        // For JP/CH cards from eras that had 1st Edition printings (XY/BW/DP
+        // era JP cards), show "1st Edition <rarity>" as a distinct variant so
+        // users can distinguish from Unlimited. TCGdex records whether a card
+        // HAS a 1st Edition printing via variants.firstEdition.
+        const hasFirstEd = isJA && hit.variants?.firstEdition === true;
+        const rarityLabel = hit.rarity || null;
+        const variants_to_add = hasFirstEd
+          ? [
+              ['1st Edition' + (rarityLabel ? ` ${rarityLabel}` : ''), price],
+              [rarityLabel ? `${rarityLabel} (Unlimited)` : 'Unlimited', price],
+            ]
+          : [[rarityLabel, price]];
+
+        for (const [variantLabel, variantPrice] of variants_to_add) {
+          const varSuffix = hasFirstEd ? (variantLabel.startsWith('1st') ? '-1st' : '-unl') : '';
+          out.push(normalizeCard({
+            id: `tcgdex-${db}-${hit.id}${varSuffix}`,
+            name: hit.name,
+            card_number: hit.localId || hit.id?.split('-').pop() || '',
+            set_name: hit.set?.name || '',
+            language: langTag,
+            condition: 'NM',
+            is_graded: false,
+            variant: variantLabel,
+            hp: hit.hp || null,
+            image_url: img,
+            current_market_price: variantPrice,
+            last_priced_at: cm?.updated || null,
+            _set_release: hit.set?.releaseDate,
+            _set_id:      hit.set?.id,
+            _rarity:      hit.rarity,
+            _source:      'tcgdex',
+          }));
+        }
       }
       console.info(`[searchTCGdex/${lang}] ${out.length} hits for "${cleanName}"`);
       return out;

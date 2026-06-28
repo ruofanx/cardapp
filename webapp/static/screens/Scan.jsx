@@ -577,14 +577,6 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
   );
 }
 
-// Price multipliers for editor selectors (kept in sync with Detail.jsx).
-const CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DMG'];
-const CONDITION_MULT = { NM: 1, LP: 0.78, MP: 0.55, HP: 0.34, DMG: 0.20 };
-const LANG_MULT      = { EN: 1, JP: 0.86, CH: 0.78 };
-const GRADERS = ['Raw', 'PSA', 'CGC', 'BGS', 'SGC'];
-// Grade multipliers — averaged across major graders. Raw = base price.
-const GRADE_MULT = { 10: 4.0, 9.5: 2.4, 9: 1.6, 8.5: 1.2, 8: 1.0, 7: 0.75, 6: 0.55, 5: 0.4, 4: 0.3, 3: 0.22, 2: 0.18, 1: 0.15 };
-
 function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
   const cur = tweaks.currency;
   const [picked, setPicked] = useStateScan(0);
@@ -616,6 +608,14 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   // JP sets) with the backend's eBay/PriceCharting-backed estimate.
   const [quotedUSD, setQuotedUSD] = useStateScan(null);
   const [quoting, setQuoting]     = useStateScan(false);
+  // Server-computed graded price — when the user picks a grader+grade, fetch
+  // the backend's graded estimate (PriceCharting first, then eBay Browse with
+  // grade qualifier "PSA 9 … Japanese"). This is far more accurate than
+  // applying a static multiplier to the raw Cardmarket EUR price, especially
+  // for iconic JP slabs like Wild Blaze M Charizard EX where the market for
+  // PSA 9 ($180-$358) bears no relationship to 1.6× Cardmarket EUR ($44).
+  const [gradedQuoteUSD, setGradedQuoteUSD] = useStateScan(null);
+  const [gradedQuoting, setGradedQuoting]   = useStateScan(false);
 
   // Build filter option lists from the candidate set.
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
@@ -676,7 +676,25 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
     return () => { cancelled = true; };
   }, [card?.id]);
 
+  // Graded price: fetch from backend when user picks a grader+grade. Uses
+  // PriceCharting graded prices for EN cards, and eBay Browse with grade
+  // qualifier for JP/CH cards where PriceCharting has no data.
   const isGraded = grader !== 'Raw';
+  React.useEffect(() => {
+    setGradedQuoteUSD(null);
+    if (!card || !isGraded || !grader || grader === 'Raw' || !grade || !window.api?.quotePrice) return;
+    let cancelled = false;
+    setGradedQuoting(true);
+    window.api.quotePrice({ ...card, lang: card.lang || lang, condition: 'NM', is_graded: true, grader, grade })
+      .then(res => {
+        if (cancelled) return;
+        const p = res?.estimated_price;
+        if (p != null && Number.isFinite(Number(p))) setGradedQuoteUSD(Number(p));
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setGradedQuoting(false); });
+    return () => { cancelled = true; };
+  }, [card?.id, isGraded, grader, grade]);
   const hasBase  = quotedUSD != null || (card?.usd != null && Number.isFinite(Number(card.usd)));
   const baseUSD  = quotedUSD != null ? quotedUSD : (hasBase ? Number(card.usd) : null);
   // LANG_MULT projects an EN-priced card onto a JP/CH market estimate — only
@@ -684,12 +702,18 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   // When `lang` matches the candidate's own language, baseUSD is already
   // priced for that market (skip it to avoid double-discounting).
   const langMult = (lang === card?.lang) ? 1 : (LANG_MULT[lang] || 1);
-  const autoAdj  = hasBase
-    ? baseUSD
-      * (CONDITION_MULT[isGraded ? 'NM' : condition] || 1)
-      * langMult
-      * (isGraded ? (GRADE_MULT[grade] || 1) : 1)
-    : null;
+  // When graded and the backend returned a live graded price, use it directly
+  // (PriceCharting / eBay Browse with grade qualifier). Otherwise fall back to
+  // the raw base × static multiplier — a reasonable estimate while the quote
+  // is still loading or for less common cards with no live data.
+  const autoAdj  = isGraded && gradedQuoteUSD != null
+    ? gradedQuoteUSD
+    : hasBase
+      ? baseUSD
+        * (CONDITION_MULT[isGraded ? 'NM' : condition] || 1)
+        * langMult
+        * (isGraded ? (GRADE_MULT[grade] || 1) : 1)
+      : null;
   // Manual override wins if provided.
   const manualNum = Number(manualPrice);
   const useManual = manualPrice !== '' && Number.isFinite(manualNum) && manualNum >= 0;
@@ -1013,9 +1037,9 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
             <div className="row" style={{ marginTop: 2, justifyContent: 'space-between', alignItems: 'baseline' }}>
               <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em' }}>
                 {useManual ? 'YOUR PRICE' : 'ADJUSTED PRICE'}
-                {quoting && <span style={{ textTransform: 'none', fontWeight: 400 }}> · quoting…</span>}
+                {(quoting || gradedQuoting) && <span style={{ textTransform: 'none', fontWeight: 400 }}> · quoting…</span>}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', opacity: quoting ? 0.6 : 1 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', opacity: (quoting || gradedQuoting) ? 0.6 : 1 }}>
                 <Price usd={adjUSD} currency={cur === 'BOTH' ? 'USD' : cur} size="md"/>
                 {hasBase && !useManual && adjUSD != null && Math.abs(adjUSD - baseUSD) > 0.005 && (
                   <span className="mono" style={{ fontSize: 10, color: 'var(--ink-4)', textDecoration: 'line-through' }}>
