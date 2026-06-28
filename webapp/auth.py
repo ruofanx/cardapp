@@ -1,6 +1,9 @@
 from __future__ import annotations
+import logging
 import os
 from fastapi import Header, HTTPException, status
+
+log = logging.getLogger(__name__)
 
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 
@@ -21,7 +24,8 @@ async def get_current_account(authorization: str | None = Header(default=None)) 
         uid = payload.get("sub")
         if not uid:
             raise ValueError("no sub")
-    except Exception:
+    except Exception as exc:
+        log.debug("JWT decode failed: %s", type(exc).__name__)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     import db_postgres as db

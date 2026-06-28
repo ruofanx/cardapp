@@ -549,7 +549,7 @@ def get_account(uid: str) -> dict | None:
         row = cur.fetchone()
         if not row:
             return None
-        return {"id": str(row[0]), "email": row[1], "plan": row[2], "trial_ends_at": row[3]}
+        return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
 
 
 def create_account(uid: str, email: str) -> dict:
@@ -564,7 +564,7 @@ def create_account(uid: str, email: str) -> dict:
             (uid, email, trial_ends),
         )
         row = cur.fetchone()
-        return {"id": str(row[0]), "email": row[1], "plan": row[2], "trial_ends_at": row[3]}
+        return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
 
 
 def get_scan_count(account_id: str, month: str) -> int:
