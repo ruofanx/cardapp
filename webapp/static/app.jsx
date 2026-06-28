@@ -2,6 +2,9 @@
 
 const { useState: useStateApp, useEffect: useEffectApp, useCallback: useCallbackApp } = React;
 
+let _authToken = null;
+function getAuthToken() { return _authToken; }
+
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "theme": "dark",
   "cardRender": "svg",
@@ -21,6 +24,7 @@ function App() {
   const [users, setUsers] = useStateApp([]);
   const [currentUser, setCurrentUser] = useStateApp(null);
   const [backend, setBackend] = useStateApp({ online: null, error: null, busy: false });
+  const [authed, setAuthed] = useStateApp(false);
 
   const top = stack[stack.length - 1];
 
@@ -224,6 +228,33 @@ function App() {
     root.style.setProperty('--density', t.density);
   }, [t.theme, t.accentHue, t.density]);
 
+  // Auth: restore existing session + keep token refreshed
+  useEffectApp(() => {
+    if (!window._supabase) return;
+    window._supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        _authToken = data.session.access_token;
+        setAuthed(true);
+      }
+    });
+    const { data: { subscription } } = window._supabase.auth.onAuthStateChange((_event, session) => {
+      _authToken = session?.access_token || null;
+      setAuthed(!!session);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  function handleLogin(token, session) {
+    _authToken = token;
+    setAuthed(true);
+  }
+
+  async function handleSignOut() {
+    if (window._supabase) await window._supabase.auth.signOut();
+    _authToken = null;
+    setAuthed(false);
+  }
+
   const screenProps = {
     tweaks: t, setTweak,
     navigate: (s, p) => s === '__back' ? goBack() : navigate(s, p),
@@ -239,6 +270,7 @@ function App() {
     users, currentUser, setCurrentUser,
     backend,
     params: top.params,
+    onSignOut: handleSignOut,
   };
 
   let Screen;
@@ -255,6 +287,10 @@ function App() {
   }
 
   const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan';
+
+  if (!authed) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>

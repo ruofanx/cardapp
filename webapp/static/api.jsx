@@ -19,6 +19,11 @@
  */
 
 (function () {
+  function _authHeader() {
+    const token = typeof getAuthToken === 'function' ? getAuthToken() : null;
+    return token ? { 'Authorization': `Bearer ${token}` } : {};
+  }
+
   // Default to same-host:8000 so the page works from any LAN IP — phone hits
   // http://192.168.x.x:5173 and the API resolves to http://192.168.x.x:8000.
   // Override with window.POKECOLLECT_API or api.setBase() if backend is elsewhere.
@@ -58,7 +63,7 @@
     const url = `${state.base}${path}`;
     const init = {
       method: opts.method || 'GET',
-      headers: { 'Accept': 'application/json', ...(opts.headers || {}) },
+      headers: { 'Accept': 'application/json', ..._authHeader(), ...(opts.headers || {}) },
       ...opts,
     };
     if (opts.body && !(opts.body instanceof FormData) && typeof opts.body === 'object') {

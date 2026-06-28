@@ -1,6 +1,6 @@
 /* Settings + Onboarding screens */
 
-function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, setCurrentUser, collection = [], backend, reloadCollection }) {
+function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, setCurrentUser, collection = [], backend, reloadCollection, onSignOut }) {
   const setsCount = new Set((collection || []).map(c => c.set).filter(Boolean)).size;
   return (
     <div className="screen">
@@ -86,11 +86,14 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
         </SettingsSection>
 
         <div style={{ padding: '8px 16px 24px' }}>
-          <button className="tap" style={{
-            width: '100%', padding: '14px', borderRadius: 14,
-            background: 'transparent', color: 'var(--neg)', fontWeight: 500, fontSize: 14,
-            border: '1px solid var(--hairline-soft)',
-          }}>Sign out</button>
+          {onSignOut && (
+            <button
+              onClick={onSignOut}
+              style={{ padding: '12px 16px', width: '100%', background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: '10px', fontSize: '15px', cursor: 'pointer', marginTop: '24px' }}
+            >
+              Sign out
+            </button>
+          )}
         </div>
       </div>
     </div>
