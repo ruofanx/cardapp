@@ -1,6 +1,6 @@
 /* Browse / Collection — search + filter + grid */
 
-const { useState: useStateBrowse, useMemo: useMemoBrowse } = React;
+const { useState: useStateBrowse, useMemo: useMemoBrowse, useEffect: useEffectBrowse } = React;
 
 const GRADER_LOGOS = { PSA: 1, BGS: 1, CGC: 1, SGC: 1, HGA: 1 };
 
@@ -55,6 +55,22 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
   // Selected tag names (case preserved for display; matched case-insensitively).
   // Set semantics — multi-select with AND filter (card must have ALL selected).
   const [selectedTags, setSelectedTags] = useStateBrowse(() => new Set());
+  const [setLogos, setSetLogos] = useStateBrowse(null); // null = not yet fetched
+
+  useEffectBrowse(() => {
+    if (view !== 'set' || setLogos !== null) return;
+    Promise.all([
+      fetch('https://api.tcgdex.net/v2/en/sets').then(r => r.json()).catch(() => []),
+      fetch('https://api.tcgdex.net/v2/ja/sets').then(r => r.json()).catch(() => []),
+    ]).then(([en, ja]) => {
+      const map = {};
+      const norm = n => n.toLowerCase().replace(/[^a-z0-9]/g, '');
+      [...(en || []), ...(ja || [])].forEach(s => {
+        if (s.logo && s.name) map[norm(s.name)] = s.logo + '.png';
+      });
+      setSetLogos(map);
+    });
+  }, [view, setLogos]);
 
   // Collect distinct tag names across the user's collection, sorted by frequency.
   // We hide the "wishlist" tag from this row because it already has its own
@@ -342,6 +358,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
         {view === 'set' && items.length > 0 && (
           <div className="col gap-2" style={{ padding: '4px 16px' }}>
             {(() => {
+              const normName = n => n.toLowerCase().replace(/[^a-z0-9]/g, '');
               const map = new Map();
               items.forEach(c => {
                 if (!c.set) return;
@@ -351,26 +368,32 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                 if (!s.preview) s.preview = c;
                 map.set(c.set, s);
               });
-              return Array.from(map.values()).sort((a, b) => b.value - a.value);
-            })().map(s => (
-              <button key={s.name} className="tap row" style={{
-                padding: '12px 14px', background: 'var(--bg-1)', borderRadius: 14,
-                border: '1px solid var(--hairline-soft)', textAlign: 'left', gap: 12,
-                alignItems: 'center',
-              }}>
-                <div style={{ width: 44, flexShrink: 0 }}>
-                  <CardArt card={s.preview} renderMode={tweaks.cardRender} size="xs" fill flat/>
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{s.name}</div>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.owned} card{s.owned === 1 ? '' : 's'}</div>
-                </div>
-                <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                  <Price usd={s.value} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
-                  <Icon name="chevron-right" size={16} style={{ color: 'var(--ink-3)', marginLeft: 'auto', marginTop: 2 }}/>
-                </div>
-              </button>
-            ))}
+              return Array.from(map.values()).sort((a, b) => b.value - a.value).map(s => {
+                const logo = setLogos ? setLogos[normName(s.name)] : null;
+                return (
+                  <button key={s.name} className="tap row" style={{
+                    padding: '12px 14px', background: 'var(--bg-1)', borderRadius: 14,
+                    border: '1px solid var(--hairline-soft)', textAlign: 'left', gap: 12,
+                    alignItems: 'center',
+                  }}>
+                    <div style={{ width: 72, height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {logo
+                        ? <img src={logo} alt={s.name} style={{ maxWidth: 72, maxHeight: 44, objectFit: 'contain', display: 'block' }}/>
+                        : <div style={{ width: 44 }}><CardArt card={s.preview} renderMode={tweaks.cardRender} size="xs" fill flat/></div>
+                      }
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500 }}>{s.name}</div>
+                      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.owned} card{s.owned === 1 ? '' : 's'}</div>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <Price usd={s.value} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
+                      <Icon name="chevron-right" size={16} style={{ color: 'var(--ink-3)', marginLeft: 'auto', marginTop: 2 }}/>
+                    </div>
+                  </button>
+                );
+              });
+            })()}
           </div>
         )}
       </div>
