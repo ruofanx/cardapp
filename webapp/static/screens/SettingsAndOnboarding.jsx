@@ -1,7 +1,27 @@
 /* Settings + Onboarding screens */
 
+const { useState: useStateSettings } = React;
+
 function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, setCurrentUser, collection = [], backend, reloadCollection, onSignOut }) {
   const setsCount = new Set((collection || []).map(c => c.set).filter(Boolean)).size;
+  const [refreshing, setRefreshing] = useStateSettings(false);
+  const [refreshMsg, setRefreshMsg] = useStateSettings(null);
+
+  const handleRefreshAll = async () => {
+    if (refreshing || !window.api?.refreshAllPrices) return;
+    setRefreshing(true);
+    setRefreshMsg(null);
+    try {
+      await window.api.refreshAllPrices();
+      setRefreshMsg('Done — prices updated.');
+      if (reloadCollection) reloadCollection(currentUser?.id);
+    } catch (e) {
+      setRefreshMsg(`Error: ${e?.message || 'refresh failed'}`);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   return (
     <div className="screen">
       <NavBar large title="Settings"/>
@@ -64,25 +84,26 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
           <SettingsRow label="Server" value={(window.api && window.api.state.base) || 'http://localhost:8000'} mono/>
           <SettingsRow label="Price provider" value="TCGplayer · Cardmarket · PriceCharting"/>
           <SettingsRow label="Refresh" value="Daily 7am CT"/>
-        </SettingsSection>
-
-        <SettingsSection label="Trading">
-          <ToggleRow label="Show fairness verdict" value={true}/>
-          <ToggleRow label="Block lowballs" value={true} sub="Auto-decline trades >25% unfair"/>
-          <ToggleRow label="Public collection" value={false} sub="Private — only trade partners see your cards"/>
-        </SettingsSection>
-
-        <SettingsSection label="Notifications">
-          <ToggleRow label="Price alerts" value={true}/>
-          <ToggleRow label="New trade offers" value={true}/>
-          <ToggleRow label="Set releases" value={false}/>
+          <div style={{ padding: '10px 14px', borderTop: '1px solid var(--hairline-soft)' }}>
+            <button className="tap" onClick={handleRefreshAll} disabled={refreshing || backend?.online === false}
+              style={{
+                width: '100%', padding: '9px 0', borderRadius: 10,
+                background: 'var(--accent)', color: 'var(--accent-ink)',
+                fontWeight: 600, fontSize: 13, opacity: (refreshing || backend?.online === false) ? 0.5 : 1,
+              }}>
+              {refreshing ? 'Refreshing…' : 'Refresh all prices now'}
+            </button>
+            {refreshMsg && (
+              <div style={{ marginTop: 6, fontSize: 12, color: refreshMsg.startsWith('Error') ? 'var(--neg)' : 'var(--pos)', textAlign: 'center' }}>
+                {refreshMsg}
+              </div>
+            )}
+          </div>
         </SettingsSection>
 
         <SettingsSection label="About">
-          <SettingsRow label="Version" value="1.4.2 (build 91)" mono/>
-          <SettingsRow label="Changelog"/>
-          <SettingsRow label="Privacy"/>
-          <SettingsRow label="Terms"/>
+          <SettingsRow label="Collection" value={`${collection.length} card${collection.length === 1 ? '' : 's'} · ${setsCount} set${setsCount === 1 ? '' : 's'}`}/>
+          <SettingsRow label="Pricing engines" value="eBay Browse · PriceCharting · Cardmarket · TCGplayer"/>
         </SettingsSection>
 
         <div style={{ padding: '8px 16px 24px' }}>
