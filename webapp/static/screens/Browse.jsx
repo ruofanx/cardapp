@@ -135,7 +135,8 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
       });
     }
     if (sort === 'value')    list = [...list].sort((a, b) => (b.usd || 0) - (a.usd || 0));
-    if (sort === 'recent')   list = [...list].reverse();
+    // 'recent' = newest-added first. Backend already returns created_at DESC,
+    // so no re-sort needed — just use list as-is (undoes any prior sorts).
     if (sort === 'az')       list = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     if (sort === 'change')   list = [...list].sort((a, b) => Math.abs(b.change || 0) - Math.abs(a.change || 0));
     return list;
@@ -168,7 +169,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
         <Stat label="Cards" value={items.length} mono/>
         <Stat label="Value" value={fmtPrice(total, cur === 'BOTH' ? 'USD' : cur, { decimals: 0 })} mono accent/>
         <Stat label="Sets" value={new Set(items.map(c => c.set).filter(Boolean)).size} mono/>
-        <Stat label="Foil" value={items.filter(c => c.holo).length} mono/>
+        {items.some(c => c.is_graded) ? (
+          <Stat label="Graded" value={items.filter(c => c.is_graded).length} mono/>
+        ) : (
+          <Stat label="Foil" value={items.filter(c => c.holo).length} mono/>
+        )}
       </div>
 
       {/* Search */}
