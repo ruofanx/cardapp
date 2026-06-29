@@ -7,7 +7,7 @@
 
 const { useState: useStateScan, useEffect: useEffectScan, useRef: useRefScan } = React;
 
-function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection, backend }) {
+function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection, collection, backend }) {
   const [phase, setPhase] = useStateScan('idle');         // idle | scanning | result
   const [flash, setFlash] = useStateScan(false);
   const [pipelineLog, setPipelineLog] = useStateScan([]);
@@ -550,6 +550,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
           tweaks={tweaks}
           capturedPhotoUrl={capturedPhotoUrl}
           capturedPhotoFile={capturedPhotoFile}
+          existingTags={Array.from(new Set((collection || []).flatMap(c => c.tags || []).filter(Boolean))).sort()}
           onAddToCollection={handleAddToCollection}
           onAddWishlist={handleAddWishlist}
           onSkip={handleSkip}
@@ -577,7 +578,9 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
   );
 }
 
-function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
+const SUGGESTED_TAGS = ['for trade', 'binder', 'pc', 'graded', 'gift'];
+
+function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, existingTags, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
   const cur = tweaks.currency;
   const [picked, setPicked] = useStateScan(0);
   const [setFilter, setSetFilter] = useStateScan('');
@@ -586,6 +589,18 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const [typeFilter, setTypeFilter] = useStateScan(() =>
     window.api?.isSealedProduct?.(candidates[0]) ? 'sealed' : 'card');
   const [isAdding, setIsAdding] = useStateScan(false);
+  const [purchasePrice, setPurchasePrice] = useStateScan('');
+  const [selectedTags, setSelectedTags] = useStateScan([]);
+  const [newTag, setNewTag] = useStateScan('');
+
+  const toggleTag = (tag) => setSelectedTags(prev =>
+    prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+
+  const commitNewTag = () => {
+    const t = newTag.trim().toLowerCase();
+    if (t && !selectedTags.includes(t)) setSelectedTags(prev => [...prev, t]);
+    setNewTag('');
+  };
   // 1st Edition toggle — for JP/CH cards where the search results don't
   // distinguish 1st Ed from Unlimited (TCGdex JA often lacks this data for
   // older XY/BW-era sets like Wild Blaze). Resets when the selected card
@@ -620,6 +635,9 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const fallbackImage = capturedPhotoUrl || card?.raw?.image_url || card?.raw?.image || null;
   const cardForHero = card && !card.image_url ? { ...card, image_url: fallbackImage } : card;
 
+  const paidNum = Number(purchasePrice);
+  const paidValue = purchasePrice !== '' && Number.isFinite(paidNum) && paidNum >= 0 ? paidNum : null;
+
   const defaultCardProps = card ? {
     condition: 'NM',
     lang: card.lang || 'EN',
@@ -627,8 +645,8 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
     grade: null,
     is_graded: false,
     usd: card.usd,
-    purchase_price: null,
-    tags: [],
+    purchase_price: paidValue,
+    tags: selectedTags,
   } : {};
 
   const Chip = ({ active, onClick, children }) => (
@@ -816,6 +834,95 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
           }}>
             {isFirstEd ? '✓ 1st Edition' : '1st Edition?  Tap to mark'}
           </button>
+        )}
+
+        {/* Paid price + tag picker */}
+        {card && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* PAID $ */}
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em', flexShrink: 0 }}>PAID $</div>
+              <input
+                type="number" inputMode="decimal" step="0.01" min="0"
+                value={purchasePrice}
+                onChange={e => setPurchasePrice(e.target.value)}
+                placeholder="what you paid (optional)"
+                style={{
+                  flex: 1, padding: '7px 10px', borderRadius: 8,
+                  background: 'var(--bg-2)', color: 'var(--ink)',
+                  border: '1px solid transparent',
+                  fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)',
+                  outline: 'none',
+                }}
+              />
+            </div>
+
+            {/* Tags */}
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em', marginBottom: 6 }}>TAGS</div>
+
+              {/* Selected tags */}
+              {selectedTags.length > 0 && (
+                <div className="row gap-1" style={{ flexWrap: 'wrap', marginBottom: 6 }}>
+                  {selectedTags.map(t => (
+                    <button key={t} className="tap" onClick={() => toggleTag(t)} style={{
+                      padding: '3px 8px 3px 6px', borderRadius: 999,
+                      background: 'var(--accent-soft)', color: 'var(--accent)',
+                      border: '1px solid var(--accent)',
+                      fontSize: 11, fontWeight: 600,
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                    }}>#{t} <span style={{ fontSize: 13, lineHeight: 1 }}>×</span></button>
+                  ))}
+                </div>
+              )}
+
+              {/* Suggestions from collection + hardcoded */}
+              {(() => {
+                const pool = Array.from(new Set([...SUGGESTED_TAGS, ...(existingTags || [])]));
+                const unselected = pool.filter(t => !selectedTags.includes(t));
+                if (unselected.length === 0) return null;
+                return (
+                  <div style={{ overflowX: 'auto', scrollbarWidth: 'none', marginLeft: -16, marginRight: -16, paddingLeft: 16, paddingRight: 16, marginBottom: 6 }}>
+                    <div className="row gap-1" style={{ flexWrap: 'nowrap', paddingBottom: 2 }}>
+                      {unselected.map(t => (
+                        <button key={t} className="tap" onClick={() => toggleTag(t)} style={{
+                          padding: '3px 8px', borderRadius: 999, flexShrink: 0,
+                          background: 'transparent', color: 'var(--ink-3)',
+                          border: '1px dashed var(--hairline-soft)',
+                          fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap',
+                        }}>+ {t}</button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* New tag input */}
+              <div className="row gap-2">
+                <input
+                  value={newTag}
+                  onChange={e => setNewTag(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commitNewTag(); }
+                  }}
+                  placeholder="type a new tag…"
+                  style={{
+                    flex: 1, padding: '7px 10px', borderRadius: 8,
+                    background: 'var(--bg-2)', color: 'var(--ink)',
+                    border: '1px solid var(--hairline-soft)',
+                    fontSize: 13, outline: 'none',
+                  }}
+                />
+                <button className="tap" onClick={commitNewTag} disabled={!newTag.trim()} style={{
+                  padding: '7px 12px', borderRadius: 8,
+                  background: 'var(--bg-2)', color: 'var(--ink-2)',
+                  fontSize: 12, fontWeight: 600,
+                  border: '1px solid var(--hairline-soft)',
+                  opacity: newTag.trim() ? 1 : 0.4,
+                }}>Add</button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Action bar — Done | Wishlist | Add to Collection (NM/EN/Raw defaults) */}
