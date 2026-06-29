@@ -153,7 +153,8 @@ function Sparkline({ data, w = 80, h = 24, color = 'currentColor', fill = false,
 // Card visual placeholder — three render modes
 // ============================================================================
 // renderMode: "placeholder" (striped + label), "stylized" (foil-sheen tile), "photo" (user-photo placeholder), "mix" (decides per card)
-function CardArt({ card, renderMode = 'mix', size = 'md', flat = false }) {
+// fill=true: width 100% of parent instead of fixed pixel size (use inside grid/flex containers)
+function CardArt({ card, renderMode = 'mix', size = 'md', flat = false, fill = false }) {
   // User-captured photo, used as a fallback when there's no catalogue image
   // (e.g. sealed products — boxes/ETBs aren't in the card catalogues, so
   // image_url is always null for them; the user's own scan photo is the
@@ -178,7 +179,7 @@ function CardArt({ card, renderMode = 'mix', size = 'md', flat = false }) {
   const radius = size === 'xs' ? 4 : size === 'sm' ? 6 : size === 'md' ? 9 : 12;
 
   const baseStyle = {
-    width: s.w,
+    width: fill ? '100%' : s.w,
     aspectRatio: aspect,
     borderRadius: radius,
     flexShrink: 0,

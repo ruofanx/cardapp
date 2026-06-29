@@ -273,11 +273,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
           </div>
         )}
         {view === 'grid' && items.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, padding: '8px 16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, padding: '8px 12px' }}>
             {items.map(c => (
-              <button key={c.id} className="tap" onClick={() => navigate('detail', { card: c })} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                <div style={{ position: 'relative' }}>
-                  <CardArt card={c} renderMode={tweaks.cardRender} size="md"/>
+              <button key={c.id} className="tap" onClick={() => navigate('detail', { card: c })} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4, width: '100%', minWidth: 0 }}>
+                <div style={{ position: 'relative', width: '100%' }}>
+                  <CardArt card={c} renderMode={tweaks.cardRender} size="md" fill/>
                   {c.bulk && <div style={{
                     position: 'absolute', top: 4, right: 4,
                     background: 'oklch(0 0 0 / 0.7)', backdropFilter: 'blur(4px)',
