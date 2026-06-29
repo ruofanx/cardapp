@@ -371,7 +371,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
               return Array.from(map.values()).sort((a, b) => b.value - a.value).map(s => {
                 const logo = setLogos ? setLogos[normName(s.name)] : null;
                 return (
-                  <button key={s.name} className="tap row" style={{
+                  <button key={s.name} className="tap row" onClick={() => { setQuery(s.name); setView('grid'); }} style={{
                     padding: '12px 14px', background: 'var(--bg-1)', borderRadius: 14,
                     border: '1px solid var(--hairline-soft)', textAlign: 'left', gap: 12,
                     alignItems: 'center',
