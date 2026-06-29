@@ -12,8 +12,13 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
     setRefreshing(true);
     setRefreshMsg(null);
     try {
-      await window.api.refreshAllPrices();
-      setRefreshMsg('Done — prices updated.');
+      const result = await window.api.refreshAllPrices();
+      const parts = [];
+      if (result?.updated != null) parts.push(`${result.updated} updated`);
+      if (result?.skipped)         parts.push(`${result.skipped} skipped`);
+      if (result?.failures)        parts.push(`${result.failures} failed`);
+      if (result?.elapsed_sec)     parts.push(`${result.elapsed_sec}s`);
+      setRefreshMsg(parts.length ? `Done — ${parts.join(' · ')}` : 'Done — prices updated.');
       if (reloadCollection) reloadCollection(currentUser?.id);
     } catch (e) {
       setRefreshMsg(`Error: ${e?.message || 'refresh failed'}`);
