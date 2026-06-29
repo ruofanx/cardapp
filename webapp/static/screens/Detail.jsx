@@ -490,6 +490,22 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     }
   };
 
+  const [watching, setWatching] = React.useState(false);
+  const handleWatch = async () => {
+    if (!addToCollection || watching) return;
+    setWatching(true);
+    try {
+      await addToCollection({
+        ...c,
+        purchase_price: null,
+        tags: ['wishlist'],
+      });
+      navigate('browse');
+    } catch (_) {
+      setWatching(false);
+    }
+  };
+
   // Price to show in the hero.
   //   - Dirty + quote landed → previewPrice (what Save will commit)
   //   - Dirty + quote still in flight → local multiplier estimate, so the
@@ -1115,11 +1131,12 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
           </>
         ) : (
           <>
-            <button className="tap" style={{
+            <button className="tap" onClick={handleWatch} disabled={watching} style={{
               flex: 1, height: 48, borderRadius: 14,
               background: 'var(--bg-2)', color: 'var(--ink)',
               fontWeight: 500, fontSize: 15,
-            }}>Watch</button>
+              opacity: watching ? 0.6 : 1,
+            }}>{watching ? 'Adding…' : 'Watchlist'}</button>
             <button className="tap" onClick={handleAdd} disabled={adding} style={{
               flex: 2, height: 48, borderRadius: 14,
               background: 'var(--accent)', color: 'var(--accent-ink)',
