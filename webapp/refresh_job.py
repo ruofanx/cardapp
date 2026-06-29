@@ -103,11 +103,11 @@ async def _price_for_card(card: db.Card) -> float | None:
     nm_price = result.nm_price
 
     if card.is_graded and card.grade_company and card.grade is not None:
-        # Reuse the multiplier table from app.py
-        from app import GRADED_MULTIPLIERS
-        mult = GRADED_MULTIPLIERS.get(
-            (card.grade_company.upper(), float(card.grade)), 1.0,
-        )
+        from app import _pick_multiplier
+        mult = _pick_multiplier(
+            card.grade_company, float(card.grade),
+            card.set_name, card.variant,
+        ) or 1.0
         return round(nm_price * mult, 2)
 
     # Raw — apply condition factor
