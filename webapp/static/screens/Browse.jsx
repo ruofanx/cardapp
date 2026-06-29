@@ -136,6 +136,8 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
     }
     if (sort === 'value')    list = [...list].sort((a, b) => (b.usd || 0) - (a.usd || 0));
     if (sort === 'recent')   list = [...list].reverse();
+    if (sort === 'az')       list = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    if (sort === 'change')   list = [...list].sort((a, b) => Math.abs(b.change || 0) - Math.abs(a.change || 0));
     return list;
   }, [query, sort, filter, selectedTags, collection]);
 
@@ -266,8 +268,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
             }}>{v}</button>
           ))}
         </div>
-        <button className="tap row gap-1" onClick={() => setSort(sort === 'value' ? 'recent' : 'value')} style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-          {sort === 'value' ? 'Sort: Value' : 'Sort: Recent'} <Icon name="chevron-down" size={14}/>
+        <button className="tap row gap-1" onClick={() => {
+          const cycle = { value: 'recent', recent: 'az', az: 'change', change: 'value' };
+          setSort(s => cycle[s] || 'value');
+        }} style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          {sort === 'value' ? 'Sort: Value' : sort === 'recent' ? 'Sort: Recent' : sort === 'az' ? 'Sort: A–Z' : 'Sort: Change'} <Icon name="chevron-down" size={14}/>
         </button>
       </div>
 
@@ -300,6 +305,15 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                     color: 'oklch(1 0 0 / 0.85)', fontSize: 8, fontWeight: 700,
                     letterSpacing: '0.05em', padding: '2px 5px', borderRadius: 4,
                   }}>BULK</div>}
+                  {(c.lang === 'JP' || c.lang === 'CH') && (
+                    <div style={{
+                      position: 'absolute', top: 4, left: 4,
+                      background: c.lang === 'JP' ? 'oklch(0.40 0.16 25 / 0.88)' : 'oklch(0.38 0.14 80 / 0.88)',
+                      backdropFilter: 'blur(4px)',
+                      color: '#fff', fontSize: 7, fontWeight: 800,
+                      letterSpacing: '0.05em', padding: '2px 4px', borderRadius: 3,
+                    }}>{c.lang}</div>
+                  )}
                   {window.api?.isSealedProduct?.(c) && (
                     <div style={{ position: 'absolute', bottom: 4, left: 4 }}>
                       <ProductTypeBadge type={c.product_type} />
