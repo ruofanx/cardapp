@@ -114,11 +114,15 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
     } else {
       list = list.filter(c => !isWishlistCard(c));
     }
-    if (query) list = list.filter(c =>
-      (c.name || '').toLowerCase().includes(query.toLowerCase()) ||
-      (c.set  || '').toLowerCase().includes(query.toLowerCase()) ||
-      (c.code || '').toLowerCase().includes(query.toLowerCase())
-    );
+    if (query) {
+      const q = query.toLowerCase();
+      list = list.filter(c =>
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.set  || '').toLowerCase().includes(q) ||
+        (c.code || '').toLowerCase().includes(q) ||
+        tagNamesOf(c).some(t => t.toLowerCase().includes(q))
+      );
+    }
     if (filter === 'cards')  list = list.filter(c => !window.api?.isSealedProduct?.(c));
     if (filter === 'foil')   list = list.filter(c => c.holo);
     if (filter === 'jp')     list = list.filter(c => c.lang === 'JP');
