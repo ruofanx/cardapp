@@ -115,6 +115,31 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   const losers = moversList.slice(-2).reverse();
   const recentScans = ownedCards.slice(0, 4);
   const watchlist = ownedCards.filter(c => (c.usd || 0) > 5).slice(0, 3);
+
+  // Per-card price history for Watchlist sparklines — fetched for the top 3 watchlist cards.
+  const [cardHistories, setCardHistories] = useStateHome({});
+  React.useEffect(() => {
+    if (!watchlist.length || backend?.online === false) return;
+    const base = window.api?.state?.base || 'http://localhost:8000';
+    const token = window.api?.state?.token;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    watchlist.forEach(c => {
+      if (cardHistories[c.id]) return;
+      fetch(`${base}/api/cards/${c.id}/price-history`, { headers })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.points?.length) {
+            setCardHistories(prev => ({
+              ...prev,
+              [c.id]: data.points.slice(-16).map(p => p.price),
+            }));
+          }
+        })
+        .catch(() => {});
+    });
+  // Only refetch when watchlist card IDs change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlist.map(c => c.id).join(','), backend?.online]);
   // Wishlist preview — first 6 by recency, room to grow when there are more.
   const wishlistPreview = wishlistCards.slice(0, 6);
 
@@ -206,9 +231,8 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
             <button className="tap" onClick={() => setSearchOpen(v => !v)} style={{ color: searchOpen ? 'var(--accent)' : 'inherit' }}>
               <Icon name="search" size={20}/>
             </button>
-            <button className="tap" style={{ position: 'relative' }} aria-label="Notifications">
+            <button className="tap" style={{ position: 'relative' }} aria-label="Notifications" onClick={() => navigate('browse')}>
               <Icon name="bell" size={20}/>
-              <span style={{ position: 'absolute', top: 0, right: 0, width: 6, height: 6, borderRadius: 3, background: 'var(--accent)' }}/>
             </button>
             {/* Profile avatar — opens You / settings */}
             <button className="tap" onClick={() => navigate('settings')} style={{
@@ -491,7 +515,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
                   <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
                   <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{c.code} · {c.set}</div>
                 </div>
-                <Sparkline data={[c.usd*0.92, c.usd*0.95, c.usd*0.91, c.usd*0.97, c.usd*0.99, c.usd*0.96, c.usd*1.02, c.usd*0.98, c.usd]} w={70} h={28} stroke={1.4} color={c.change >= 0 ? 'var(--pos)' : 'var(--neg)'}/>
+                <Sparkline data={cardHistories[c.id]?.length > 1 ? cardHistories[c.id] : [c.usd, c.usd]} w={70} h={28} stroke={1.4} color={c.change >= 0 ? 'var(--pos)' : 'var(--neg)'}/>
                 <div style={{ textAlign: 'right' }}>
                   <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
                   <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
