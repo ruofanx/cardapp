@@ -345,9 +345,10 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
               const map = new Map();
               items.forEach(c => {
                 if (!c.set) return;
-                const s = map.get(c.set) || { name: c.set, owned: 0, total: 0, value: 0 };
+                const s = map.get(c.set) || { name: c.set, owned: 0, value: 0, preview: null };
                 s.owned += 1;
                 s.value += (c.usd || 0);
+                if (!s.preview) s.preview = c;
                 map.set(c.set, s);
               });
               return Array.from(map.values()).sort((a, b) => b.value - a.value);
@@ -355,13 +356,16 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
               <button key={s.name} className="tap row" style={{
                 padding: '12px 14px', background: 'var(--bg-1)', borderRadius: 14,
                 border: '1px solid var(--hairline-soft)', textAlign: 'left', gap: 12,
+                alignItems: 'center',
               }}>
-                <div className="foil-soft" style={{ width: 44, height: 44, borderRadius: 10, flexShrink: 0 }}/>
+                <div style={{ width: 44, flexShrink: 0 }}>
+                  <CardArt card={s.preview} renderMode={tweaks.cardRender} size="xs" fill flat/>
+                </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 500 }}>{s.name}</div>
                   <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.owned} card{s.owned === 1 ? '' : 's'}</div>
                 </div>
-                <div style={{ textAlign: 'right' }}>
+                <div style={{ textAlign: 'right', flexShrink: 0 }}>
                   <Price usd={s.value} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
                   <Icon name="chevron-right" size={16} style={{ color: 'var(--ink-3)', marginLeft: 'auto', marginTop: 2 }}/>
                 </div>
