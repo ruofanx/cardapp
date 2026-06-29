@@ -472,15 +472,19 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     }
   };
 
+  const [addPurchasePrice, setAddPurchasePrice] = useStateDetail('');
+
   const handleAdd = async () => {
     if (!addToCollection || adding) return;
     setAdding(true);
+    const paidNum = parseFloat(addPurchasePrice.replace(/[$,]/g, '')) || null;
     try {
       await addToCollection({
         ...c, condition, lang,
         is_graded: grading === 'graded',
         grader:    grading === 'graded' ? grader : null,
         grade:     grading === 'graded' ? grade  : null,
+        purchase_price: paidNum,
       });
       navigate('browse');
     } catch (e) {
@@ -1108,8 +1112,26 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
         background: 'oklch(0.16 0.01 250 / 0.85)',
         backdropFilter: 'blur(20px)',
         borderTop: '1px solid var(--hairline-soft)',
-        display: 'flex', gap: 8,
+        display: 'flex', flexDirection: 'column', gap: 8,
       }}>
+        {!isInCollection && (
+          <div className="row gap-2" style={{
+            background: 'var(--bg-2)', borderRadius: 10, padding: '8px 12px', alignItems: 'center',
+          }}>
+            <span style={{ fontSize: 12, color: 'var(--ink-3)', fontWeight: 500, whiteSpace: 'nowrap' }}>Paid $</span>
+            <input
+              type="number" min="0" step="0.01"
+              value={addPurchasePrice}
+              onChange={e => setAddPurchasePrice(e.target.value)}
+              placeholder="optional"
+              style={{
+                flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                fontSize: 14, fontWeight: 500, color: 'var(--ink)',
+              }}
+            />
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
         {isInCollection ? (
           <>
             <button className="tap" onClick={handleTrade} style={{
@@ -1148,6 +1170,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
             </button>
           </>
         )}
+        </div>
       </div>
     </div>
   );
