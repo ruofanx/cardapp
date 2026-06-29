@@ -409,7 +409,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
         })()}
 
         {/* Movers */}
-        <Section title="Biggest movers · 24h" right={<button className="tap" onClick={() => navigate('browse')} style={{ color: 'var(--ink-3)', fontSize: 13 }}>See all</button>}>
+        <Section title="Biggest movers" right={<button className="tap" onClick={() => navigate('browse')} style={{ color: 'var(--ink-3)', fontSize: 13 }}>See all</button>}>
           <div className="col gap-2" style={{ padding: '0 16px' }}>
             {[...movers, ...losers].slice(0, 4).map(c => (
               <button key={c.id} className="tap" onClick={() => navigate('detail', { card: c })} style={{
@@ -429,7 +429,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
                 <div style={{ textAlign: 'right' }}>
                   <Price usd={c.usd} currency={cur} size="sm"/>
                   <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11, fontWeight: 500 }}>
-                    {c.change >= 0 ? '+' : ''}{(c.change * 100).toFixed(1)}%
+                    {c.change >= 0 ? '+' : ''}{(c.change).toFixed(1)}%
                   </div>
                 </div>
               </button>

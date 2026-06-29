@@ -366,7 +366,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                 <div style={{ textAlign: 'right' }}>
                   <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
                   <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
-                    {c.change >= 0 ? '+' : ''}{(c.change * 100).toFixed(1)}%
+                    {c.change >= 0 ? '+' : ''}{(c.change).toFixed(1)}%
                   </div>
                 </div>
               </button>
