@@ -14,7 +14,8 @@ import os
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from bisect import bisect_right
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -542,6 +543,82 @@ def portfolio_summary(user_id: int) -> PortfolioSummary:
         bulk_count=bulk,
         untracked_count=untracked,
     )
+
+
+def portfolio_history(user_id: int, days: int = 365) -> list[dict]:
+    """Return [{date, value}] portfolio series using real price_history data.
+
+    For each date that any card has a price_history entry, sums the last known
+    price for every non-wishlist card the user owned by that date. Uses
+    bisect for O(log n) per-card lookups so the full scan stays fast even with
+    hundreds of history rows.
+    """
+    since = (date.today() - timedelta(days=days)).isoformat()
+
+    with connect() as conn:
+        # Non-wishlist cards: exclude anything tagged 'wishlist'
+        cards_rows = conn.execute("""
+            SELECT c.id, c.created_at, c.current_market_price
+            FROM cards c
+            WHERE c.user_id = ?
+              AND c.id NOT IN (
+                  SELECT ct.card_id FROM card_tags ct
+                  JOIN tags t ON t.id = ct.tag_id WHERE t.name = 'wishlist'
+              )
+        """, (user_id,)).fetchall()
+
+        if not cards_rows:
+            return []
+
+        card_ids = [r["id"] for r in cards_rows]
+        card_added = {r["id"]: (r["created_at"] or "2000-01-01")[:10] for r in cards_rows}
+        card_current = {r["id"]: float(r["current_market_price"] or 0) for r in cards_rows}
+
+        placeholders = ",".join("?" * len(card_ids))
+        history_rows = conn.execute(
+            f"SELECT card_id, date(recorded_at) as d, price_usd "
+            f"FROM price_history WHERE card_id IN ({placeholders}) "
+            f"ORDER BY card_id, recorded_at",
+            card_ids,
+        ).fetchall()
+
+    # Build per-card sorted (dates, prices) lists for binary search
+    from collections import defaultdict
+    raw: dict[int, dict[str, float]] = defaultdict(dict)
+    for row in history_rows:
+        raw[row["card_id"]][row["d"]] = float(row["price_usd"])
+
+    card_dates: dict[int, list[str]] = {}
+    card_prices: dict[int, list[float]] = {}
+    for cid, by_date in raw.items():
+        sorted_dates = sorted(by_date)
+        card_dates[cid] = sorted_dates
+        card_prices[cid] = [by_date[d] for d in sorted_dates]
+
+    # All distinct dates any card has history, limited to `days` window
+    all_dates = sorted(
+        {d for entries in raw.values() for d in entries if d >= since}
+    )
+    if not all_dates:
+        return []
+
+    result = []
+    for day in all_dates:
+        total = 0.0
+        for cid in card_ids:
+            if card_added.get(cid, "9999-99-99") > day:
+                continue
+            dates_list = card_dates.get(cid, [])
+            prices_list = card_prices.get(cid, [])
+            idx = bisect_right(dates_list, day) - 1
+            if idx >= 0:
+                total += prices_list[idx]
+            else:
+                total += card_current[cid]
+        if total > 0:
+            result.append({"date": day, "value": round(total, 2)})
+
+    return result
 
 
 def _row_to_card(r) -> Card:

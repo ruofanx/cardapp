@@ -234,6 +234,13 @@ def get_portfolio(user_id: int, account: dict = Depends(get_current_account)):
         raise HTTPException(404, str(e))
 
 
+@app.get("/api/users/{user_id}/portfolio-history")
+def get_portfolio_history(user_id: int, days: int = 365,
+                           account: dict = Depends(get_current_account)):
+    """Daily portfolio value series. Returns [{date, value}] oldest-first."""
+    return {"points": db.portfolio_history(user_id, days=min(days, 1095))}
+
+
 # ---------------------------------------------------------------------------
 # Cards
 # ---------------------------------------------------------------------------

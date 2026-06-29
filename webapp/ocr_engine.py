@@ -40,9 +40,15 @@ except ImportError:
     anthropic = None  # type: ignore
 
 try:
-    import google.generativeai as genai  # type: ignore
+    from google import genai as genai  # type: ignore
+    from google.genai import types as genai_types  # type: ignore
 except ImportError:
-    genai = None  # type: ignore
+    try:
+        import google.generativeai as genai  # type: ignore  # legacy fallback
+        genai_types = None  # type: ignore
+    except ImportError:
+        genai = None  # type: ignore
+        genai_types = None  # type: ignore
 
 # HEIC support so iPhone photos work directly without manual conversion.
 try:
@@ -461,28 +467,44 @@ def _identify_with_anthropic(image_path: str, model: str, product_type_hint: Opt
 def _identify_with_gemini(image_path: str, model: str, product_type_hint: Optional[str] = None):
     """Free-tier path. Get a key at https://aistudio.google.com/apikey."""
     if genai is None:
-        raise RuntimeError("pip install google-generativeai")
+        raise RuntimeError("pip install google-genai")
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY not set")
 
-    genai.configure(api_key=api_key)
-    gemini_model = genai.GenerativeModel(
-        model,
-        system_instruction=LLM_SYSTEM_PROMPT,
-        generation_config={"temperature": 0.1, "response_mime_type": "application/json"},
-    )
-
-    # Gemini accepts PIL.Image directly which auto-handles HEIC if pillow_heif
-    # is registered, jpg/png/webp natively.
     if Image is None:
         raise RuntimeError("pip install Pillow (needed to load images for Gemini)")
     img = Image.open(image_path)
-    response = gemini_model.generate_content(
-        [img, _identify_user_prompt(product_type_hint)],
-        request_options={"timeout": 30},
-    )
-    raw = response.text.strip()
+
+    prompt = _identify_user_prompt(product_type_hint)
+
+    # New google-genai SDK (google.genai)
+    if genai_types is not None:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model,
+            contents=[img, prompt],
+            config=genai_types.GenerateContentConfig(
+                system_instruction=LLM_SYSTEM_PROMPT,
+                temperature=0.1,
+                response_mime_type="application/json",
+            ),
+        )
+        raw = response.text.strip()
+    else:
+        # Legacy google-generativeai SDK fallback
+        genai.configure(api_key=api_key)
+        gemini_model = genai.GenerativeModel(
+            model,
+            system_instruction=LLM_SYSTEM_PROMPT,
+            generation_config={"temperature": 0.1, "response_mime_type": "application/json"},
+        )
+        response = gemini_model.generate_content(
+            [img, prompt],
+            request_options={"timeout": 30},
+        )
+        raw = response.text.strip()
+
     identity, confidence, raw_json, product_type = _build_identity_from_json(raw)
     return identity, confidence, raw_json, product_type
 

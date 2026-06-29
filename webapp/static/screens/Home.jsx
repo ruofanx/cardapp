@@ -2,38 +2,13 @@
 
 const { useState: useStateHome, useMemo: useMemoHome } = React;
 
-// ---------------------------------------------------------------------------
-// Synthesize a portfolio series for a given time range.
-// Returns { series, points, label, changeLabel }.
-// Different ranges produce different lengths + volatility so the chart and
-// the 24h / 30d / Yr change labels visibly switch when you tap a range.
-// ---------------------------------------------------------------------------
-function buildPortfolioSeries(totalUSD, range) {
-  const cfgs = {
-    '1D': { points: 24, drawdown: 0.985, vol: 0.003, label: '24h',      compareIdx: -2 },
-    '1W': { points: 28, drawdown: 0.96,  vol: 0.006, label: 'past week',   compareIdx: 0 },
-    '1M': { points: 30, drawdown: 0.88,  vol: 0.010, label: 'past 30 days', compareIdx: 0 },
-    '3M': { points: 90, drawdown: 0.78,  vol: 0.012, label: 'past 90 days', compareIdx: 0 },
-    '1Y': { points: 52, drawdown: 0.55,  vol: 0.020, label: 'past year',  compareIdx: 0 },
-    'ALL':{ points: 80, drawdown: 0.18,  vol: 0.035, label: 'all time',   compareIdx: 0 },
-  };
-  const cfg = cfgs[range] || cfgs['1M'];
-  if (totalUSD <= 0) return { series: new Array(cfg.points).fill(0), cfg };
-  const out = [];
-  const start = totalUSD * cfg.drawdown;
-  // Seed pseudo-random by range so switching tabs gives a stable curve per range.
-  const seed = range.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  let r = seed;
-  const rand = () => { r = (r * 9301 + 49297) % 233280; return r / 233280; };
-  for (let i = 0; i < cfg.points; i++) {
-    const t = i / (cfg.points - 1);
-    const noise = Math.sin(i * 0.18 + seed) * (totalUSD * cfg.vol * 0.6)
-                + (rand() - 0.45) * (totalUSD * cfg.vol);
-    out.push(start + (totalUSD - start) * t + noise);
-  }
-  out[out.length - 1] = totalUSD;
-  return { series: out, cfg };
-}
+const RANGE_META = {
+  '1W':  { days: 7,    label: 'past week' },
+  '1M':  { days: 30,   label: 'past 30 days' },
+  '3M':  { days: 90,   label: 'past 90 days' },
+  '1Y':  { days: 365,  label: 'past year' },
+  'ALL': { days: 1095, label: 'all time' },
+};
 
 function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, backend }) {
   const cur = tweaks.currency;
@@ -84,21 +59,56 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   const sealedUSD = ownedCards.filter(c => window.api?.isSealedProduct?.(c)).reduce((s, c) => s + (Number(c.usd) || 0), 0);
   const cardsUSD  = totalUSD - sealedUSD;
 
-  const { series: portfolio, cfg } = useMemoHome(
-    () => buildPortfolioSeries(totalUSD, range),
-    [totalUSD, range]
-  );
+  // Real portfolio history from price_history DB. Fetched once; filtered by range client-side.
+  const [allHistory, setAllHistory] = useStateHome(null);
+  const [historyLoading, setHistoryLoading] = useStateHome(false);
+  React.useEffect(() => {
+    if (!currentUser?.id || backend?.online === false) return;
+    setHistoryLoading(true);
+    const base = window.api?.state?.base || 'http://localhost:8000';
+    const token = window.api?.state?.token;
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch(`${base}/api/users/${currentUser.id}/portfolio-history?days=1095`, { headers })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.points) setAllHistory(data.points); })
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false));
+  }, [currentUser?.id, backend?.online]);
 
-  // 24h delta is always vs. the previous tick of the *daily* range so the
-  // "+$5 24h" stays meaningful regardless of which tab is selected.
-  const { series: dailySeries } = useMemoHome(
-    () => buildPortfolioSeries(totalUSD, '1D'),
-    [totalUSD]
-  );
-  const change24h = totalUSD - dailySeries[dailySeries.length - 2];
+  // Filter all history to the selected range and extract values for Sparkline.
+  const meta = RANGE_META[range] || RANGE_META['1M'];
+  const cutoff = useMemoHome(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - meta.days);
+    return d.toISOString().slice(0, 10);
+  }, [meta.days]);
+
+  const portfolio = useMemoHome(() => {
+    if (!allHistory || allHistory.length === 0) return [totalUSD, totalUSD];
+    const pts = allHistory.filter(p => p.date >= cutoff);
+    if (pts.length === 0) {
+      // All history is older than range — show flat line at current value
+      return [totalUSD, totalUSD];
+    }
+    const values = pts.map(p => p.value);
+    // Ensure the last point matches current total so the chart ends at reality
+    values[values.length - 1] = totalUSD;
+    return values;
+  }, [allHistory, cutoff, totalUSD]);
+
+  // 24h change: compare yesterday's last known price to today.
+  const change24h = useMemoHome(() => {
+    if (!allHistory || allHistory.length < 2) return 0;
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const cutoff24h = yesterday.toISOString().slice(0, 10);
+    const before = [...allHistory].filter(p => p.date <= cutoff24h).pop();
+    return before ? totalUSD - before.value : 0;
+  }, [allHistory, totalUSD]);
 
   const changeRange = totalUSD - portfolio[0];
   const changeRangePct = portfolio[0] ? (changeRange / portfolio[0]) * 100 : 0;
+  const cfg = meta;
 
   const moversList = [...ownedCards].filter(c => c.change != null).sort((a, b) => (b.change || 0) - (a.change || 0));
   const movers = moversList.slice(0, 3);
@@ -303,18 +313,31 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
         {(() => {
           const minP = Math.min(...portfolio);
           const maxP = Math.max(...portfolio);
+          const range_ = maxP - minP;
           const midP = (minP + maxP) / 2;
           const base = portfolio[0] || 1;
           const pct = (v) => ((v - base) / base) * 100;
-          const ticks = [
+          const ticks = range_ > 0.01 ? [
             { v: maxP, label: 'High' },
             { v: midP, label: 'Mid'  },
             { v: minP, label: 'Low'  },
-          ];
+          ] : [{ v: maxP, label: '' }];
+          const hasRealHistory = allHistory && allHistory.length > 1 &&
+            allHistory.some(p => p.date >= cutoff);
           return (
         <div style={{ padding: '12px 0 18px' }}>
           <div style={{ position: 'relative', height: 120, paddingRight: 60 }}>
             <Sparkline data={portfolio} w={298} h={120} stroke={1.5} fill={true} color="var(--accent)" />
+            {!hasRealHistory && !historyLoading && (
+              <div style={{
+                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', pointerEvents: 'none',
+              }}>
+                <span style={{ fontSize: 11, color: 'var(--ink-4)', background: 'var(--bg-0)', padding: '2px 8px', borderRadius: 6 }}>
+                  Price history building…
+                </span>
+              </div>
+            )}
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '0 16px' }}>
               {[0, 1, 2].map(i => <div key={i} style={{ height: 1, background: 'var(--hairline-soft)' }}/>)}
             </div>
@@ -344,7 +367,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
             </div>
           </div>
           <div className="row" style={{ padding: '10px 16px 0', gap: 6, justifyContent: 'space-between' }}>
-            {['1D', '1W', '1M', '3M', '1Y', 'ALL'].map((r) => {
+            {['1W', '1M', '3M', '1Y', 'ALL'].map((r) => {
               const active = r === range;
               return (
                 <button key={r} className="tap" onClick={() => setRange(r)} style={{
