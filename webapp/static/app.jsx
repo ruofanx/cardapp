@@ -301,6 +301,7 @@ function App() {
           tab={tab} navigate={navigate}
           users={users} currentUser={currentUser} setCurrentUser={setCurrentUser}
           reloadCollection={reloadCollection}
+          scanQueueCount={scanQueue.length}
         />
       )}
       <TweaksHook t={t} setTweak={setTweak}/>
@@ -330,7 +331,7 @@ function BackendBanner({ backend, onRetry }) {
   );
 }
 
-function BottomTabBar({ tab, navigate, users = [], currentUser, setCurrentUser, reloadCollection }) {
+function BottomTabBar({ tab, navigate, users = [], currentUser, setCurrentUser, reloadCollection, scanQueueCount = 0 }) {
   const [showSwitcher, setShowSwitcher] = useStateApp(false);
   const items = [
     { id: 'home',     label: 'Home',    icon: 'home' },
@@ -365,7 +366,7 @@ function BottomTabBar({ tab, navigate, users = [], currentUser, setCurrentUser, 
           if (it.primary) {
             return (
               <button key={it.id} className="tap" onClick={() => navigate(it.id)} style={{
-                display: 'grid', placeItems: 'center', padding: '4px 0',
+                display: 'grid', placeItems: 'center', padding: '4px 0', position: 'relative',
               }}>
                 <div style={{
                   width: 44, height: 44, borderRadius: 22,
@@ -375,6 +376,16 @@ function BottomTabBar({ tab, navigate, users = [], currentUser, setCurrentUser, 
                 }}>
                   <Icon name={it.icon} size={20}/>
                 </div>
+                {scanQueueCount > 0 && (
+                  <div style={{
+                    position: 'absolute', top: 2, right: '50%', transform: 'translateX(14px)',
+                    minWidth: 16, height: 16, borderRadius: 8,
+                    background: '#ef4444', color: '#fff',
+                    fontSize: 10, fontWeight: 700, lineHeight: '16px',
+                    textAlign: 'center', padding: '0 4px',
+                    border: '1.5px solid var(--bg)',
+                  }}>{scanQueueCount}</div>
+                )}
               </button>
             );
           }
