@@ -586,6 +586,11 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const [typeFilter, setTypeFilter] = useStateScan(() =>
     window.api?.isSealedProduct?.(candidates[0]) ? 'sealed' : 'card');
   const [isAdding, setIsAdding] = useStateScan(false);
+  // 1st Edition toggle — for JP/CH cards where the search results don't
+  // distinguish 1st Ed from Unlimited (TCGdex JA often lacks this data for
+  // older XY/BW-era sets like Wild Blaze). Resets when the selected card
+  // changes so picking a different candidate starts clean.
+  const [isFirstEd, setIsFirstEd] = useStateScan(false);
 
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
   const setOptions    = uniq(candidates.map(c => c.set));
@@ -608,6 +613,9 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const langOptions = ['EN', 'JP', 'CH'];
   const safePicked = Math.min(picked, Math.max(0, filtered.length - 1));
   const card = filtered[safePicked] || filtered[0] || candidates[0];
+
+  // Reset 1st Edition toggle whenever the selected card changes.
+  React.useEffect(() => { setIsFirstEd(false); }, [card?.id]);
 
   const fallbackImage = capturedPhotoUrl || card?.raw?.image_url || card?.raw?.image || null;
   const cardForHero = card && !card.image_url ? { ...card, image_url: fallbackImage } : card;
@@ -699,8 +707,10 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                   {card.code}{card.set ? ` · ${card.set}` : ''}
                 </div>
               )}
-              {(card.variant || card._rarity) && (
-                <div style={{ fontSize: 10, color: 'var(--ink-3)' }}>{card.variant || card._rarity}</div>
+              {(card.variant || card._rarity || isFirstEd) && (
+                <div style={{ fontSize: 10, color: isFirstEd ? 'var(--accent)' : 'var(--ink-3)', fontWeight: isFirstEd ? 600 : 400 }}>
+                  {isFirstEd ? '1st Edition · ' : ''}{card.variant || card._rarity || ''}
+                </div>
               )}
               <div style={{ marginTop: 4 }}>
                 <Price usd={card.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
@@ -793,6 +803,21 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
           </div>
         )}
 
+        {/* 1st Edition toggle — JP/CH XY/BW-era cards often have both 1st
+            Edition and Unlimited printings but TCGdex doesn't always provide
+            that distinction. Let the user flag it here before adding. */}
+        {card && (card.lang === 'JP' || card.lang === 'CH') && !window.api?.isSealedProduct?.(card) && (
+          <button className="tap" onClick={() => setIsFirstEd(v => !v)} style={{
+            width: '100%', padding: '8px 0', borderRadius: 12,
+            background: isFirstEd ? 'oklch(0.45 0.16 25)' : 'var(--bg-2)',
+            color: isFirstEd ? '#fff' : 'var(--ink-3)',
+            fontWeight: 600, fontSize: 12,
+            border: isFirstEd ? '1.5px solid oklch(0.55 0.18 25)' : '1.5px solid var(--hairline-soft)',
+          }}>
+            {isFirstEd ? '✓ 1st Edition' : '1st Edition?  Tap to mark'}
+          </button>
+        )}
+
         {/* Action bar — Done | Wishlist | Add to Collection (NM/EN/Raw defaults) */}
         {card && (
           <div className="row gap-2">
@@ -815,8 +840,15 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
             <button className="tap" disabled={isAdding} onClick={async () => {
               setIsAdding(true);
               try {
+                const baseVariant = card.variant || card._rarity || null;
+                const variantOverride = isFirstEd
+                  ? (baseVariant && !baseVariant.toLowerCase().includes('1st')
+                      ? `1st Edition ${baseVariant}`
+                      : (baseVariant || '1st Edition'))
+                  : baseVariant;
                 await onAddToCollection({
                   ...card,
+                  variant: variantOverride,
                   ...defaultCardProps,
                   ...(capturedPhotoFile ? { _capturedPhotoFile: capturedPhotoFile } : {}),
                 });
