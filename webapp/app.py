@@ -1767,20 +1767,24 @@ STATIC_DIR.mkdir(exist_ok=True)
 UPLOADS_DIR = Path(__file__).parent / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
+# Serve the Vite build output (static/dist/) when available, otherwise fall
+# back to the legacy Babel-in-browser static/ directory.
+_DIST_DIR = STATIC_DIR / "dist"
+FRONTEND_DIR = _DIST_DIR if (_DIST_DIR / "index.html").exists() else STATIC_DIR
+
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 
 @app.get("/")
 def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
-# Serves index.html's relative asset references (styles.css, app.jsx,
-# screens/Detail.jsx, ...) directly from STATIC_DIR at the site root. Must be
+# Serves frontend assets from FRONTEND_DIR at the site root. Must be
 # mounted last — Starlette matches routes in registration order, so /api/*,
 # /uploads, and the explicit "/" route above all take precedence over this
 # catch-all.
-app.mount("/", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 
 # ---------------------------------------------------------------------------

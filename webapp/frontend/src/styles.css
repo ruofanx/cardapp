@@ -1,0 +1,252 @@
+/* PokeCollect — premium TCG collector tool */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Dark theme (default) */
+  --bg: oklch(0.16 0.01 250);
+  --bg-1: oklch(0.19 0.012 250);
+  --bg-2: oklch(0.22 0.014 250);
+  --bg-3: oklch(0.26 0.016 250);
+  --hairline: oklch(0.32 0.018 250);
+  --hairline-soft: oklch(0.27 0.014 250 / 0.6);
+
+  --ink: oklch(0.97 0.005 250);
+  --ink-2: oklch(0.78 0.012 250);
+  --ink-3: oklch(0.58 0.014 250);
+  --ink-4: oklch(0.42 0.014 250);
+
+  --accent: oklch(0.78 0.14 200);
+  --accent-soft: oklch(0.78 0.14 200 / 0.14);
+  --accent-ink: oklch(0.18 0.05 200);
+
+  --pos: oklch(0.78 0.14 155);
+  --neg: oklch(0.72 0.16 25);
+  --warn: oklch(0.82 0.14 80);
+
+  --foil-1: oklch(0.78 0.14 320);
+  --foil-2: oklch(0.78 0.14 200);
+  --foil-3: oklch(0.85 0.14 110);
+  --foil-4: oklch(0.78 0.14 60);
+
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+
+  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 12px 32px -12px oklch(0 0 0 / 0.6);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 18px 48px -16px oklch(0 0 0 / 0.7);
+
+  --sans: 'Geist', system-ui, -apple-system, sans-serif;
+  --mono: 'Geist Mono', ui-monospace, 'SF Mono', monospace;
+
+  --tap: 44px;
+  --page-bg: oklch(0.08 0.005 250);
+}
+[data-theme="light"] { --page-bg: oklch(0.92 0.005 250); }
+
+[data-theme="light"] {
+  --bg: oklch(0.985 0.003 250);
+  --bg-1: oklch(0.97 0.005 250);
+  --bg-2: oklch(0.94 0.006 250);
+  --bg-3: oklch(0.90 0.008 250);
+  --hairline: oklch(0.86 0.008 250);
+  --hairline-soft: oklch(0.90 0.006 250 / 0.7);
+
+  --ink: oklch(0.18 0.012 250);
+  --ink-2: oklch(0.34 0.012 250);
+  --ink-3: oklch(0.50 0.012 250);
+  --ink-4: oklch(0.62 0.012 250);
+
+  --accent: oklch(0.55 0.14 200);
+  --accent-soft: oklch(0.55 0.14 200 / 0.10);
+  --accent-ink: oklch(0.98 0 0);
+
+  --pos: oklch(0.55 0.14 155);
+  --neg: oklch(0.55 0.18 25);
+
+  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 8px 24px -10px oklch(0 0 0 / 0.12);
+  --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 14px 36px -12px oklch(0 0 0 / 0.18);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+
+body {
+  font-family: var(--sans);
+  background: oklch(0.08 0.005 250);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
+  letter-spacing: -0.01em;
+}
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; outline: none; }
+button:focus { outline: none; }
+input, select, textarea { font: inherit; color: inherit; }
+
+.mono { font-family: var(--mono); font-feature-settings: "tnum"; letter-spacing: 0; }
+.tnum { font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
+
+/* The phone "screen" surface.
+ * In framed mode the IOSDevice draws a fake status bar + dynamic island
+ * as an absolute overlay, so we push content down by 54px.
+ * In fluid (fullscreen) mode ResponsiveShell sets --app-top-inset to
+ * env(safe-area-inset-top, 0px) so we respect the real device notch
+ * instead of leaving a 54px dead band. */
+.screen {
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--ink);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--sans);
+  padding-top: var(--app-top-inset, 54px);
+}
+
+.screen-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.screen-scroll::-webkit-scrollbar { display: none; }
+
+/* Foil sheen background (for chase cards, scan button, etc) */
+.foil {
+  background:
+    conic-gradient(from var(--foil-rot, 210deg) at 30% 30%,
+      var(--foil-1) 0deg,
+      var(--foil-2) 90deg,
+      var(--foil-3) 180deg,
+      var(--foil-4) 270deg,
+      var(--foil-1) 360deg);
+  filter: saturate(1.05);
+}
+.foil-soft {
+  background:
+    conic-gradient(from 210deg at 30% 30%,
+      oklch(0.78 0.14 320 / 0.6),
+      oklch(0.78 0.14 200 / 0.6),
+      oklch(0.85 0.14 110 / 0.6),
+      oklch(0.78 0.14 60 / 0.6),
+      oklch(0.78 0.14 320 / 0.6));
+  filter: saturate(0.9) blur(0.2px);
+}
+
+/* Card placeholder — striped */
+.card-stripe {
+  background-image: repeating-linear-gradient(
+    -55deg,
+    oklch(0.32 0.014 250) 0 6px,
+    oklch(0.27 0.012 250) 6px 12px
+  );
+}
+[data-theme="light"] .card-stripe {
+  background-image: repeating-linear-gradient(
+    -55deg,
+    oklch(0.86 0.008 250) 0 6px,
+    oklch(0.91 0.006 250) 6px 12px
+  );
+}
+
+/* Hairlines */
+.hr { height: 1px; background: var(--hairline); }
+.hr-soft { height: 1px; background: var(--hairline-soft); }
+
+/* Common */
+.row { display: flex; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.gap-1 { gap: 4px; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-5 { gap: 20px; } .gap-6 { gap: 24px; }
+.grow { flex: 1; min-width: 0; }
+
+/* Subtle pressed */
+.tap { transition: transform .12s ease, opacity .12s ease; }
+.tap:active { transform: scale(0.97); opacity: 0.85; }
+
+/* Shimmer for loading */
+@keyframes shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+
+/* Diagonal sheen sweep — used on card-back placeholders while images load */
+@keyframes shimmerSweep {
+  0%   { opacity: 0.2; transform: translateX(-30%); }
+  50%  { opacity: 0.9; }
+  100% { opacity: 0.2; transform: translateX(30%); }
+}
+
+/* Scan line animation */
+@keyframes scanLine {
+  0% { transform: translateY(-100%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+
+/* Foil rotation */
+@keyframes foilRot {
+  0% { --foil-rot: 0deg; }
+  100% { --foil-rot: 360deg; }
+}
+@property --foil-rot {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 210deg;
+}
+
+/* Fade/slide push transitions */
+@keyframes pushIn {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes riseIn {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* Generic chips */
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  border: 1px solid var(--hairline-soft);
+}
+.chip-strong {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+/* Number ticker */
+.delta-pos { color: var(--pos); }
+.delta-neg { color: var(--neg); }
+
+/* Sparklines */
+.spark { display: block; }
+
+/* Tab bar (bottom) */
+.tabbar {
+  flex-shrink: 0;
+  padding: 8px 8px calc(env(safe-area-inset-bottom, 0px) + 8px);
+  background: oklch(0.16 0.01 250 / 0.85);
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  border-top: 1px solid var(--hairline-soft);
+}
+[data-theme="light"] .tabbar {
+  background: oklch(0.985 0.003 250 / 0.85);
+}

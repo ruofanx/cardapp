@@ -20,5 +20,9 @@ webapp/testfile.txt
 *.heic
 *.HEIC
 
+# Vite / Node
+webapp/frontend/node_modules/
+webapp/frontend/.vite/
+
 # Environment variables
 .env
