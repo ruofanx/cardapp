@@ -11,6 +11,7 @@ import DetailScreen from './screens/Detail.jsx'
 import BulkScreen from './screens/Bulk.jsx'
 import TradeScreen from './screens/Trade.jsx'
 import SettingsScreen, { OnboardingScreen } from './screens/SettingsAndOnboarding.jsx'
+import AddProfileScreen from './screens/AddProfile.jsx'
 
 const TWEAK_DEFAULTS = {
   "theme": "dark",
@@ -252,6 +253,10 @@ export default function App() {
     backend,
     params: top.params,
     onSignOut: handleSignOut,
+    onProfileCreated: async (profile) => {
+      const refreshed = await api.listProfiles().catch(() => [])
+      if (refreshed.length) setUsers(refreshed)
+    },
   }
 
   let Screen
@@ -263,8 +268,9 @@ export default function App() {
     case 'bulk':       Screen = BulkScreen; break
     case 'trade':      Screen = TradeScreen; break
     case 'settings':   Screen = SettingsScreen; break
-    case 'onboarding': Screen = OnboardingScreen ?? SettingsScreen; break
-    default:           Screen = HomeScreen
+    case 'onboarding':    Screen = OnboardingScreen ?? SettingsScreen; break
+    case 'add-profile':   Screen = AddProfileScreen; break
+    default:              Screen = HomeScreen
   }
 
   const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan'

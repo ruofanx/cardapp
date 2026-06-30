@@ -58,26 +58,32 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
           </div>
         </div>
 
-        {/* User switcher (multi-user families) */}
-        {users.length > 1 && (
-          <div style={{ padding: '0 16px 16px' }}>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Switch user</div>
-            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-              {users.map(u => (
-                <button key={u.id} className="tap" onClick={() => {
-                  if (setCurrentUser) setCurrentUser(u);
-                  if (api) api.state.currentUserId = u.id;
-                  if (reloadCollection) reloadCollection(u.id);
-                }} style={{
-                  padding: '6px 12px', borderRadius: 999,
-                  background: u.id === currentUser?.id ? 'var(--ink)' : 'var(--bg-2)',
-                  color: u.id === currentUser?.id ? 'var(--bg)' : 'var(--ink-2)',
-                  fontSize: 12, fontWeight: 600,
-                }}>{u.name}</button>
-              ))}
-            </div>
+        {/* Profile switcher */}
+        <div style={{ padding: '0 16px 16px' }}>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Profiles</div>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {users.map(u => (
+              <button key={u.id} className="tap" onClick={() => {
+                if (setCurrentUser) setCurrentUser(u);
+                if (api) api.state.currentUserId = u.id;
+                if (reloadCollection) reloadCollection(u.id);
+              }} style={{
+                padding: '6px 12px', borderRadius: 999,
+                background: u.id === currentUser?.id ? 'var(--ink)' : 'var(--bg-2)',
+                color: u.id === currentUser?.id ? 'var(--bg)' : 'var(--ink-2)',
+                fontSize: 12, fontWeight: 600,
+              }}>{u.name}</button>
+            ))}
+            <button className="tap row gap-1" onClick={() => navigate('add-profile')} style={{
+              padding: '6px 10px 6px 8px', borderRadius: 999,
+              background: 'var(--accent-soft)', color: 'var(--accent)',
+              fontSize: 12, fontWeight: 600, alignItems: 'center',
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              Add
+            </button>
           </div>
-        )}
+        </div>
 
         <SettingsSection label="Display">
           <SettingsRow label="Theme" value={tweaks.theme === 'dark' ? 'Dark' : 'Light'}/>
