@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import api from '../api.js'
 import { CardArt, Icon, Price } from '../components.jsx'
 
@@ -26,7 +26,16 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
   // (booster box/ETB/tin/bundle) doesn't get routed through the individual
   // card search/pricing pipeline (which returns unrelated card images).
   const [scanType, setScanType] = useState('auto');
+  const [scanUsage, setScanUsage] = useState(null); // { used, limit } or null
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    api.getAccount().then(acct => {
+      if (acct?.scan_limit != null) {
+        setScanUsage({ used: acct.scan_used ?? 0, limit: acct.scan_limit })
+      }
+    }).catch(() => {})
+  }, []);
 
   const log = (label, detail, state = 'ok') =>
     setPipelineLog(prev => [...prev, { label, detail, state }]);
@@ -52,6 +61,10 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
       let found = identifyCard
         ? await identifyCard({ query, image, productTypeHint: scanType })
         : [];
+      // Update scan counter in the UI after a successful API call
+      if (image && found?.length > 0 && scanUsage) {
+        setScanUsage(u => u ? { ...u, used: Math.min(u.used + 1, u.limit) } : u);
+      }
 
       // The EN-only catalogue search (Pokemon TCG API) returns nothing for
       // JP/CH card names typed directly off the physical card — those
@@ -488,6 +501,22 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
               <span style={{ flex: 1 }}>{error.slice(0, 80)}</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Scan usage badge — free users only */}
+      {scanUsage && phase === 'idle' && (
+        <div style={{
+          position: 'absolute', top: 64, right: 16,
+          padding: '4px 10px', borderRadius: 999,
+          background: scanUsage.used >= scanUsage.limit
+            ? 'oklch(0.40 0.15 30 / 0.85)'
+            : 'oklch(0 0 0 / 0.55)',
+          color: 'oklch(1 0 0 / 0.9)',
+          fontSize: 11, fontWeight: 600, letterSpacing: '0.02em',
+          backdropFilter: 'blur(8px)',
+        }}>
+          {scanUsage.used}/{scanUsage.limit} scans
         </div>
       )}
 

@@ -236,11 +236,25 @@ class TagAttach(BaseModel):
 # Users + portfolio
 # ---------------------------------------------------------------------------
 
+FREE_SCAN_LIMIT = 20
+
 @app.get("/api/account")
 def get_account_info(account: dict = Depends(get_current_account)):
-    """Return current account info (plan, trial status) + profiles."""
+    """Return current account info (plan, trial status) + profiles + scan usage."""
     profiles = db.list_profiles(account["id"])
-    return {**account, "profiles": profiles}
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    scan_used = db.get_scan_count(account["id"], month)
+    is_pro = account["plan"] == "pro" or (
+        account["trial_ends_at"] is not None
+        and account["trial_ends_at"] > datetime.now(timezone.utc)
+    )
+    return {
+        **account,
+        "profiles": profiles,
+        "scan_used": scan_used,
+        "scan_limit": None if is_pro else FREE_SCAN_LIMIT,
+        "is_pro": is_pro,
+    }
 
 
 @app.get("/api/profiles")
@@ -1423,7 +1437,6 @@ from fastapi import Request
 
 @app.post("/api/identify")
 async def identify(request: Request, account: dict | None = Depends(get_current_account_optional)):
-    FREE_SCAN_LIMIT = 20
     if account:
         month = datetime.now(timezone.utc).strftime("%Y-%m")
         is_pro = account["plan"] == "pro" or (
