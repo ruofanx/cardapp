@@ -567,6 +567,54 @@ def create_account(uid: str, email: str) -> dict:
         return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
 
 
+def _row_to_profile(row) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "account_id": str(row["account_id"]) if row["account_id"] else None,
+        "avatar_color": row.get("avatar_color", "#34d399"),
+    }
+
+
+def list_profiles(account_id: str) -> list[dict]:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, name, account_id, avatar_color FROM users WHERE account_id = %s ORDER BY id",
+            (account_id,),
+        )
+        return [_row_to_profile(r) for r in cur.fetchall()]
+
+
+def get_profile(account_id: str, profile_id: int) -> dict | None:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, name, account_id, avatar_color FROM users WHERE id = %s AND account_id = %s",
+            (profile_id, account_id),
+        )
+        row = cur.fetchone()
+        return _row_to_profile(row) if row else None
+
+
+def create_profile(account_id: str, name: str, avatar_color: str = "#34d399") -> dict:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO users (account_id, name, avatar_color) VALUES (%s, %s, %s) "
+            "RETURNING id, name, account_id, avatar_color",
+            (account_id, name, avatar_color),
+        )
+        return _row_to_profile(cur.fetchone())
+
+
+def count_profiles(account_id: str) -> int:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users WHERE account_id = %s", (account_id,))
+        return cur.fetchone()["count"]
+
+
 def get_scan_count(account_id: str, month: str) -> int:
     with connect() as conn:
         cur = conn.cursor()

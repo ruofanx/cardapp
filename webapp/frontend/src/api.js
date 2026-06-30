@@ -2,11 +2,16 @@
 // Auth token is set by app.jsx via setAuthToken() when Supabase session changes.
 
 let _authToken = null
+let _profileId = null
 export function setAuthToken(token) { _authToken = token }
 export function getAuthToken() { return _authToken }
+export function setCurrentProfileId(id) { _profileId = id != null ? String(id) : null }
 
 function _authHeader() {
-  return _authToken ? { 'Authorization': `Bearer ${_authToken}` } : {}
+  const h = {}
+  if (_authToken) h['Authorization'] = `Bearer ${_authToken}`
+  if (_profileId) h['X-Profile-Id'] = _profileId
+  return h
 }
 
 function defaultBase() {
@@ -199,10 +204,25 @@ export const api = {
   state,
   setBase(url) { state.base = url },
 
+  async getAccount() {
+    return request('/api/account')
+  },
+
+  async listProfiles() {
+    try {
+      const data = await request('/api/profiles')
+      return Array.isArray(data) ? data : []
+    } catch { return [] }
+  },
+
+  async createProfile(name, avatarColor = '#34d399') {
+    return request('/api/profiles', { method: 'POST', body: { name, avatar_color: avatarColor } })
+  },
+
   async listUsers() {
     try {
       const data = await request(P.users())
-      const users = unwrapList(data, 'users')
+      const users = Array.isArray(data) ? data : unwrapList(data, 'users')
       return users.map(u => ({ id: u.id ?? u.user_id, name: u.name ?? u.display_name ?? `User ${u.id}` }))
     } catch { return [{ id: 1, name: 'Demo' }] }
   },

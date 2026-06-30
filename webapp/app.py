@@ -41,7 +41,7 @@ except Exception:
     import db  # local SQLite fallback during development
 
 from supabase_storage import is_configured as _storage_configured, get_signed_url as _sign_photo
-from auth import get_current_account, get_current_account_optional
+from auth import get_current_account, get_current_account_optional, get_current_profile, get_current_profile_optional
 
 def _resolve_photo(d: dict) -> dict:
     """Rewrite Supabase storage paths to signed URLs in serialized card dicts."""
@@ -236,12 +236,37 @@ class TagAttach(BaseModel):
 # Users + portfolio
 # ---------------------------------------------------------------------------
 
+@app.get("/api/account")
+def get_account_info(account: dict = Depends(get_current_account)):
+    """Return current account info (plan, trial status) + profiles."""
+    profiles = db.list_profiles(account["id"])
+    return {**account, "profiles": profiles}
+
+
+@app.get("/api/profiles")
+def list_profiles(account: dict = Depends(get_current_account)):
+    return db.list_profiles(account["id"])
+
+
+@app.post("/api/profiles")
+def create_profile(payload: dict, account: dict = Depends(get_current_account)):
+    FREE_PROFILE_LIMIT = 1
+    is_paid = account.get("plan") == "pro"
+    count = db.count_profiles(account["id"])
+    if not is_paid and count >= FREE_PROFILE_LIMIT:
+        raise HTTPException(status_code=402, detail="Upgrade to add more profiles")
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    color = payload.get("avatar_color", "#34d399")
+    return db.create_profile(account["id"], name, color)
+
+
 @app.get("/api/users")
 def get_users(account: dict | None = Depends(get_current_account_optional)):
-    users = db.list_users()
     if account:
-        return [u.__dict__ for u in users if str(getattr(u, 'account_id', None)) == account["id"]]
-    return [u.__dict__ for u in users]  # unauthenticated fallback (local dev / migration period)
+        return db.list_profiles(account["id"])
+    return [u.__dict__ for u in db.list_users()]  # unauthenticated fallback (local dev)
 
 
 @app.get("/api/users/{user_id}/portfolio")

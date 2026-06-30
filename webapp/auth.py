@@ -63,3 +63,52 @@ async def get_current_account_optional(authorization: str | None = Header(defaul
         return await get_current_account(authorization)
     except HTTPException:
         return None
+
+
+async def get_current_profile(
+    authorization: str | None = Header(default=None),
+    x_profile_id: str | None = Header(default=None),
+) -> dict:
+    """FastAPI dependency — validates JWT, resolves active profile (users row).
+
+    The frontend sends ``X-Profile-Id: <user_id>`` alongside the Bearer token.
+    We verify that the profile belongs to the authenticated account before
+    returning it.  Falls back to the account's first profile when the header
+    is absent (e.g. first launch before any profile is selected).
+
+    Returns a dict with keys: id, name, account_id, account (nested account dict).
+    """
+    account = await get_current_account(authorization)
+    import db_postgres as db
+
+    if x_profile_id:
+        try:
+            pid = int(x_profile_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid X-Profile-Id")
+        profile = db.get_profile(account["id"], pid)
+        if not profile:
+            raise HTTPException(status_code=403, detail="Profile not found or not owned by account")
+    else:
+        # Auto-select: return the first profile for this account.
+        profiles = db.list_profiles(account["id"])
+        if not profiles:
+            # First sign-in — create a default profile named after the email prefix.
+            name = account["email"].split("@")[0].capitalize() or "Me"
+            profile = db.create_profile(account["id"], name)
+        else:
+            profile = profiles[0]
+
+    profile["account"] = account
+    return profile
+
+
+async def get_current_profile_optional(
+    authorization: str | None = Header(default=None),
+    x_profile_id: str | None = Header(default=None),
+) -> dict | None:
+    """Same as get_current_profile but returns None instead of 401/403."""
+    try:
+        return await get_current_profile(authorization, x_profile_id)
+    except HTTPException:
+        return None

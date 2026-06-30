@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import api, { setAuthToken } from './api.js'
+import api, { setAuthToken, setCurrentProfileId } from './api.js'
 import { supabase } from './supabase.js'
 import { userPhotos, Icon } from './components.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakSlider, TweakSelect, TweakToggle } from './tweaks-panel.jsx'
@@ -52,12 +52,13 @@ export default function App() {
     ;(async () => {
       try {
         await api.bootstrap()
-        const us = await api.listUsers()
+        const us = await api.listProfiles()
         if (cancelled) return
-        setUsers(us)
+        setUsers(us.length ? us : await api.listUsers())
         const me = us[0] || { id: 1, name: 'Demo' }
         setCurrentUser(me)
         api.state.currentUserId = me.id
+        setCurrentProfileId(me.id)
         await reloadCollection(me.id)
       } catch (e) {
         if (cancelled) return
@@ -326,6 +327,7 @@ function BottomTabBar({ tab, navigate, users = [], currentUser, setCurrentUser, 
     if (!u || u.id === currentUser?.id) return
     if (setCurrentUser) setCurrentUser(u)
     api.state.currentUserId = u.id
+    setCurrentProfileId(u.id)
     if (reloadCollection) reloadCollection(u.id)
   }
 
