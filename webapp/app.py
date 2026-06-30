@@ -26,7 +26,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -324,7 +324,27 @@ def detach_tag(card_id: int, tag_id: int):
 
 
 @app.post("/api/users/{user_id}/cards")
-def create_card(user_id: int, payload: CardCreate, account: dict = Depends(get_current_account)):
+async def _backfill_history_task(card_id: int, name: str, set_name: str, card_number: str,
+                                  language: str, variant: Optional[str], product_type: str) -> None:
+    """Fire-and-forget async background task: seed price_history from PriceCharting chart data."""
+    import time
+    import pricecharting_lookup as pc
+    from price_history_refresh import refresh_one
+
+    cutoff_ms = time.time() * 1000 - 1095 * 86400_000  # 3 years back
+    try:
+        if product_type != "card":
+            await refresh_one(card_id, name, cutoff_ms,
+                lambda: pc.fetch_sealed_chart_history(name, set_name, product_type, language=language))
+        else:
+            await refresh_one(card_id, name, cutoff_ms,
+                lambda: pc.fetch_chart_history(name, set_name, card_number, language=language, variant=variant))
+    except Exception as e:
+        log.debug("background history backfill for card %s failed: %s", card_id, e)
+
+
+def create_card(user_id: int, payload: CardCreate, background_tasks: BackgroundTasks,
+                account: dict = Depends(get_current_account)):
     if not db.get_user(user_id):
         raise HTTPException(404, f"unknown user_id {user_id}")
     # db.Card has no `tags` column — that's the join table. Strip before
@@ -343,6 +363,15 @@ def create_card(user_id: int, payload: CardCreate, account: dict = Depends(get_c
             db.log_price(saved.id, saved.current_market_price, source="create")
         except Exception as e:
             log.warning("price_history log on create failed: %s", e)
+    # Backfill historical price data from PriceCharting in the background.
+    # Skip graded cards — PriceCharting chart data is only for raw/ungraded.
+    if saved.id and not saved.is_graded:
+        background_tasks.add_task(
+            _backfill_history_task,
+            saved.id, saved.name or "", saved.set_name or "",
+            saved.card_number or "", saved.language or "english",
+            saved.variant, saved.product_type or "card",
+        )
     return _card_to_dict(saved)
 
 
