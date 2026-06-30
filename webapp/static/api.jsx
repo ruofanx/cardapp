@@ -60,6 +60,7 @@
     identify:        () => `/api/identify`,
     refreshPrice:    () => `/api/refresh-price`,
     refreshAll:      () => `/api/refresh-prices/run-now`,
+    health:          () => `/api/health`,
     soldListings:    () => `/api/sold-listings`,
     tradePropose:    () => `/api/trade/propose`,
   };
@@ -459,6 +460,10 @@
 
     async refreshAllPrices() {
       return request(P.refreshAll(), { method: 'POST' });
+    },
+
+    async getHealth() {
+      return request(P.health());
     },
 
     // Fetch the recorded price history for a card. The backend logs a row

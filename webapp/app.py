@@ -92,8 +92,27 @@ def _shutdown():
         pass
 
 
+@app.get("/api/health")
+def health_check():
+    """Lightweight liveness probe. Returns DB card count and scheduler state."""
+    from datetime import datetime, timezone
+    info: dict = {"ok": True, "ts": datetime.now(timezone.utc).isoformat()}
+    try:
+        with db.connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS n FROM cards").fetchone()
+            info["cards"] = row["n"] if row else 0
+    except Exception as e:
+        info["db_error"] = str(e)
+    try:
+        from refresh_job import _scheduler
+        info["scheduler"] = "running" if (_scheduler and _scheduler.running) else "stopped"
+    except Exception:
+        info["scheduler"] = "unknown"
+    return info
+
+
 @app.post("/api/refresh-prices/run-now")
-async def run_refresh_now():
+async def run_refresh_now(account: dict = Depends(get_current_account)):
     """Manually trigger the daily refresh job. Useful for testing without
     waiting until 7am."""
     from refresh_job import refresh_all_cards

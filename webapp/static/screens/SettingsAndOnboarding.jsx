@@ -1,11 +1,17 @@
 /* Settings + Onboarding screens */
 
-const { useState: useStateSettings } = React;
+const { useState: useStateSettings, useEffect: useEffectSettings } = React;
 
 function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, setCurrentUser, collection = [], backend, reloadCollection, onSignOut }) {
   const setsCount = new Set((collection || []).map(c => c.set).filter(Boolean)).size;
   const [refreshing, setRefreshing] = useStateSettings(false);
   const [refreshMsg, setRefreshMsg] = useStateSettings(null);
+  const [health, setHealth] = useStateSettings(null);
+
+  useEffectSettings(() => {
+    if (backend?.online === false || !window.api?.getHealth) return;
+    window.api.getHealth().then(h => setHealth(h)).catch(() => {});
+  }, [backend?.online]);
 
   const handleRefreshAll = async () => {
     if (refreshing || !window.api?.refreshAllPrices) return;
@@ -88,7 +94,7 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
           } mono/>
           <SettingsRow label="Server" value={(window.api && window.api.state.base) || 'http://localhost:8000'} mono/>
           <SettingsRow label="Price provider" value="TCGplayer · Cardmarket · PriceCharting"/>
-          <SettingsRow label="Refresh" value="Daily 7am CT"/>
+          <SettingsRow label="Refresh" value={health?.scheduler === 'running' ? 'Daily 7am CT · scheduler running' : 'Daily 7am CT'}/>
           <div style={{ padding: '10px 14px', borderTop: '1px solid var(--hairline-soft)' }}>
             <button className="tap" onClick={handleRefreshAll} disabled={refreshing || backend?.online === false}
               style={{
