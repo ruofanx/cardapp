@@ -798,6 +798,10 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                 const active = i === safePicked;
                 const candFallback = capturedPhotoUrl || cand.raw?.image_url || cand.raw?.image || null;
                 const candForDisplay = cand.image_url ? cand : { ...cand, image_url: candFallback };
+                const alreadyOwned = cand.id && (collection || []).some(x => x.id === cand.id && !((x.tags || []).some(t => {
+                  const n = typeof t === 'object' ? (t.name || '') : String(t);
+                  return n.toLowerCase() === 'wishlist';
+                })));
                 return (
                   <button key={cand.id || i} className="tap col" onClick={() => setPicked(i)} style={{
                     alignItems: 'center', gap: 3,
@@ -805,8 +809,20 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                     padding: '4px 4px 6px', borderRadius: 10,
                     outline: active ? '2px solid var(--accent)' : '2px solid transparent',
                     outlineOffset: 1,
+                    position: 'relative',
                   }}>
-                    <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="sm" flat/>
+                    <div style={{ position: 'relative' }}>
+                      <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="sm" flat/>
+                      {alreadyOwned && (
+                        <div style={{
+                          position: 'absolute', top: 2, right: 2,
+                          width: 14, height: 14, borderRadius: 7,
+                          background: 'var(--accent)', color: 'var(--accent-ink)',
+                          fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center',
+                          border: '1px solid var(--bg)',
+                        }}>✓</div>
+                      )}
+                    </div>
                     <div style={{
                       fontSize: 8, color: active ? 'var(--ink)' : 'var(--ink-3)',
                       fontWeight: active ? 700 : 400,
