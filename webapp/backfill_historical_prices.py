@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s — %(message)s")
 
 import price_history_refresh
 
@@ -19,7 +22,7 @@ if __name__ == "__main__":
     parser.add_argument("--days", type=int, default=90,
                         help="minimum days of history to backfill (default 90)")
     args = parser.parse_args()
-    print(f"Backfilling >= {args.days} days of price history for raw cards and sealed products...")
+    print(f"Backfilling >= {args.days} days of price history for raw cards and sealed products…")
     summary = asyncio.run(price_history_refresh.refresh_all(args.days))
     print(f"\nSummary: {summary}")
     sys.exit(0)
