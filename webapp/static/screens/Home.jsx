@@ -141,8 +141,8 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   // Only refetch when watchlist card IDs change
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlist.map(c => c.id).join(','), backend?.online]);
-  // Wishlist preview — first 6 by recency, room to grow when there are more.
-  const wishlistPreview = wishlistCards.slice(0, 6);
+  // Wishlist preview — top 6 by market value so the most valuable targets are front-and-center.
+  const wishlistPreview = [...wishlistCards].sort((a, b) => (b.usd || 0) - (a.usd || 0)).slice(0, 6);
 
   // ---- Search ----
   const q = searchQ.trim().toLowerCase();
