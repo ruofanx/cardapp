@@ -31,30 +31,58 @@ function LoginScreen({ onLogin }) {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', background: 'var(--bg, #0f172a)' }}>
-      <div style={{ fontSize: '48px', marginBottom: '8px' }}>🃏</div>
-      <h1 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '4px', color: 'var(--text, #f1f5f9)' }}>PokeCollect</h1>
-      <p style={{ color: 'var(--text-secondary, #94a3b8)', marginBottom: '32px', fontSize: '14px' }}>Track your collection. Trade at shows.</p>
+    <div style={{
+      minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', padding: '24px',
+      background: 'var(--bg)',
+    }}>
+      <div className="row gap-2" style={{ marginBottom: 10, alignItems: 'center' }}>
+        <div className="foil" style={{ width: 36, height: 36, borderRadius: 10, animation: 'foilRot 18s linear infinite', flexShrink: 0 }}/>
+        <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--ink)' }}>PokeCollect</div>
+      </div>
+      <p style={{ color: 'var(--ink-3)', marginBottom: 32, fontSize: 13, fontWeight: 500, letterSpacing: '0.02em' }}>
+        Track your collection · Trade at shows
+      </p>
 
-      <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: '340px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <input
           type="email" value={email} onChange={e => setEmail(e.target.value)}
           placeholder="Email" required autoComplete="email"
-          style={{ padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border, #334155)', background: 'var(--surface, #1e293b)', color: 'var(--text, #f1f5f9)', fontSize: '16px' }}
+          style={{
+            padding: '12px 16px', borderRadius: 12,
+            border: '1px solid var(--hairline-soft)',
+            background: 'var(--bg-1)', color: 'var(--ink)',
+            fontSize: 16, outline: 'none',
+          }}
         />
         <input
           type="password" value={password} onChange={e => setPassword(e.target.value)}
           placeholder="Password" required minLength={6} autoComplete="current-password"
-          style={{ padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--border, #334155)', background: 'var(--surface, #1e293b)', color: 'var(--text, #f1f5f9)', fontSize: '16px' }}
+          style={{
+            padding: '12px 16px', borderRadius: 12,
+            border: '1px solid var(--hairline-soft)',
+            background: 'var(--bg-1)', color: 'var(--ink)',
+            fontSize: 16, outline: 'none',
+          }}
         />
-        {error && <p style={{ color: '#ef4444', fontSize: '13px', margin: 0 }}>{error}</p>}
+        {error && <p style={{ color: 'var(--neg)', fontSize: 13, margin: 0 }}>{error}</p>}
         <button type="submit" disabled={loading}
-          style={{ padding: '14px', borderRadius: '10px', background: '#3b82f6', color: 'white', fontWeight: 600, fontSize: '16px', border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
+          style={{
+            padding: '13px', borderRadius: 12,
+            background: 'var(--accent)', color: 'var(--accent-ink)',
+            fontWeight: 700, fontSize: 16, border: 'none',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            opacity: loading ? 0.6 : 1,
+          }}>
           {loading ? 'Please wait…' : (isSignUp ? 'Create account' : 'Sign in')}
         </button>
         <button type="button" onClick={() => { setIsSignUp(!isSignUp); setError(''); }}
-          style={{ background: 'none', border: 'none', color: 'var(--text-secondary, #94a3b8)', fontSize: '14px', cursor: 'pointer', padding: '4px' }}>
-          {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up — free 14-day trial"}
+          style={{
+            background: 'none', border: 'none',
+            color: 'var(--ink-3)', fontSize: 13,
+            cursor: 'pointer', padding: '4px',
+          }}>
+          {isSignUp ? 'Already have an account? Sign in' : "New here? Create an account"}
         </button>
       </form>
     </div>
