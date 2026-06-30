@@ -95,7 +95,6 @@ def _shutdown():
 @app.get("/api/health")
 def health_check():
     """Lightweight liveness probe. Returns DB card count and scheduler state."""
-    from datetime import datetime, timezone
     info: dict = {"ok": True, "ts": datetime.now(timezone.utc).isoformat()}
     try:
         with db.connect() as conn:
