@@ -110,9 +110,10 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   const changeRangePct = portfolio[0] ? (changeRange / portfolio[0]) * 100 : 0;
   const cfg = meta;
 
-  const moversList = [...ownedCards].filter(c => c.change != null).sort((a, b) => (b.change || 0) - (a.change || 0));
+  // Only cards with a recorded purchase_price have a meaningful gain_loss_pct
+  const moversList = [...ownedCards].filter(c => c.change != null && c.change !== 0).sort((a, b) => (b.change || 0) - (a.change || 0));
   const movers = moversList.slice(0, 3);
-  const losers = moversList.slice(-2).reverse();
+  const losers = moversList.filter(c => c.change < 0).slice(-2).reverse();
   const recentScans = ownedCards.slice(0, 4);
   const watchlist = ownedCards.filter(c => (c.usd || 0) > 5).slice(0, 3);
 
@@ -408,7 +409,8 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
           );
         })()}
 
-        {/* Movers */}
+        {/* Movers — only shown when at least one card has purchase price tracked */}
+        {moversList.length > 0 && (
         <Section title="Biggest movers" right={<button className="tap" onClick={() => navigate('browse')} style={{ color: 'var(--ink-3)', fontSize: 13 }}>See all</button>}>
           <div className="col gap-2" style={{ padding: '0 16px' }}>
             {[...movers, ...losers].slice(0, 4).map(c => (
@@ -436,6 +438,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
             ))}
           </div>
         </Section>
+        )}
 
         {/* Recent scans */}
         <Section title="Recent scans" right={<button className="tap" onClick={() => navigate('browse')} style={{ color: 'var(--ink-3)', fontSize: 13 }}>Browse</button>}>
