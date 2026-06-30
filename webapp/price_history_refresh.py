@@ -1,5 +1,4 @@
-"""
-Refresh `price_history` from PriceCharting's embedded chart data
+"""Refresh `price_history` from PriceCharting's embedded chart data
 (`pricecharting_lookup.fetch_chart_history` / `fetch_sealed_chart_history`,
 the "used"/ungraded series — a free ~33-month monthly price series per card).
 
@@ -18,9 +17,12 @@ import asyncio
 import time
 from datetime import datetime, timezone
 
+import logging
+
 import db
 import pricecharting_lookup as pc
 
+log = logging.getLogger(__name__)
 SOURCE = "pricecharting_chart_backfill"
 REQUEST_DELAY_SECONDS = 1.5
 
@@ -39,7 +41,7 @@ async def refresh_one(card_id: int, name: str, cutoff_ms: float, fetch) -> int:
 
     result = await fetch()
     if not result:
-        print(f"  card {card_id:>3} {name!r}: no chart data found")
+        log.debug("price_history backfill: card %s %r — no chart data found", card_id, name)
         return 0
 
     points, url = result
@@ -62,7 +64,7 @@ async def refresh_one(card_id: int, name: str, cutoff_ms: float, fetch) -> int:
                 rows,
             )
             conn.commit()
-    print(f"  card {card_id:>3} {name!r}: +{len(rows)} rows from {url}")
+    log.info("price_history backfill: card %s %r → +%d rows from %s", card_id, name, len(rows), url)
     return len(rows)
 
 
@@ -85,7 +87,7 @@ async def refresh_all(min_days: int = 90) -> dict:
 
     total_inserted = 0
 
-    print(f"Raw cards ({len(raw_cards)}):")
+    log.info("price_history refresh: %d raw cards", len(raw_cards))
     for card in raw_cards:
         total_inserted += await refresh_one(
             card["id"], card["name"], cutoff_ms,
@@ -96,7 +98,7 @@ async def refresh_all(min_days: int = 90) -> dict:
         )
         await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
-    print(f"\nSealed products ({len(sealed_products)}):")
+    log.info("price_history refresh: %d sealed products", len(sealed_products))
     for card in sealed_products:
         total_inserted += await refresh_one(
             card["id"], card["name"], cutoff_ms,
@@ -106,8 +108,8 @@ async def refresh_all(min_days: int = 90) -> dict:
         )
         await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
-    print(f"\nDone — inserted {total_inserted} historical price rows across "
-          f"{len(raw_cards) + len(sealed_products)} cards (source={SOURCE!r}).")
+    log.info("price_history refresh done — inserted %d rows across %d cards",
+             total_inserted, len(raw_cards) + len(sealed_products))
 
     return {
         "raw_cards": len(raw_cards),
