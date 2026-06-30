@@ -11,6 +11,10 @@ function _authHeader() {
 
 function defaultBase() {
   if (typeof window !== 'undefined' && window.POKECOLLECT_API) return window.POKECOLLECT_API
+  // In Capacitor native shell window.location is capacitor://localhost — use env URL instead.
+  if (typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.()) {
+    return import.meta.env.VITE_API_URL || 'https://pokecollect.up.railway.app'
+  }
   if (typeof window !== 'undefined' && window.location?.hostname) {
     const port = window.location.port
     if (!port || port === '80' || port === '443') {
