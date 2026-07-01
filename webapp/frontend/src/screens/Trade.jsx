@@ -171,6 +171,16 @@ function TradeScreen({ tweaks, navigate, identifyCard, currentUser, collection, 
         left={phase === 'idle'
           ? <NavBackButton onClick={() => navigate('home')} label="Home"/>
           : <NavBackButton onClick={reset} label="Back"/>}
+        right={
+          <button className="tap row gap-1" onClick={() => navigate('want-list')} style={{
+            padding: '5px 10px', borderRadius: 10,
+            background: 'var(--bg-2)', color: 'var(--ink-2)',
+            fontSize: 12, fontWeight: 600, alignItems: 'center',
+          }}>
+            <Icon name="want-list" size={14} />
+            Wants
+          </button>
+        }
       />
 
       {phase === 'idle' && (

@@ -12,6 +12,7 @@ import BulkScreen from './screens/Bulk.jsx'
 import TradeScreen from './screens/Trade.jsx'
 import SettingsScreen, { OnboardingScreen } from './screens/SettingsAndOnboarding.jsx'
 import AddProfileScreen from './screens/AddProfile.jsx'
+import WantListScreen from './screens/WantList.jsx'
 
 const TWEAK_DEFAULTS = {
   "theme": "dark",
@@ -270,10 +271,11 @@ export default function App() {
     case 'settings':   Screen = SettingsScreen; break
     case 'onboarding':    Screen = OnboardingScreen ?? SettingsScreen; break
     case 'add-profile':   Screen = AddProfileScreen; break
+    case 'want-list':     Screen = WantListScreen; break
     default:              Screen = HomeScreen
   }
 
-  const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan'
+  const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan' || top.screen === 'want-list' || top.screen === 'add-profile'
 
   if (!authed) {
     return <LoginScreen onLogin={handleLogin} />
