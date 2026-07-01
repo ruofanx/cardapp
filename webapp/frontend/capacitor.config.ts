@@ -1,6 +1,6 @@
 import type { CapacitorConfig } from '@capacitor/cli'
 
-const PROD_URL = process.env.POKECOLLECT_API_URL || 'https://pokecollect.up.railway.app'
+const PROD_URL = process.env.POKECOLLECT_API_URL || 'https://cardapp-production-569d.up.railway.app'
 
 const config: CapacitorConfig = {
   appId: 'com.pokecollect.app',
