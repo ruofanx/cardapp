@@ -276,6 +276,22 @@ def create_profile(payload: dict, account: dict = Depends(get_current_account)):
     return db.create_profile(account["id"], name, color)
 
 
+@app.patch("/api/profiles/trade-mode")
+def set_trade_mode(payload: dict, profile: dict = Depends(get_current_profile)):
+    enabled = bool(payload.get("enabled", False))
+    db.set_trade_mode(profile["id"], enabled)
+    return {"id": profile["id"], "trade_mode": enabled}
+
+
+@app.get("/api/public/{profile_id}")
+def get_public_profile(profile_id: int):
+    """No auth — returns a profile's want list for trade show sharing."""
+    data = db.get_public_profile(profile_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Profile not found or not in trade show mode")
+    return data
+
+
 @app.get("/api/users")
 def get_users(account: dict | None = Depends(get_current_account_optional)):
     if account:

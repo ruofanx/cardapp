@@ -219,6 +219,14 @@ export const api = {
     return request('/api/profiles', { method: 'POST', body: { name, avatar_color: avatarColor } })
   },
 
+  async setTradeMode(enabled) {
+    return request('/api/profiles/trade-mode', { method: 'PATCH', body: { enabled } })
+  },
+
+  async getPublicProfile(profileId) {
+    return request(`/api/public/${profileId}`)
+  },
+
   async listUsers() {
     try {
       const data = await request(P.users())

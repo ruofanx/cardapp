@@ -13,6 +13,7 @@ import TradeScreen from './screens/Trade.jsx'
 import SettingsScreen, { OnboardingScreen } from './screens/SettingsAndOnboarding.jsx'
 import AddProfileScreen from './screens/AddProfile.jsx'
 import WantListScreen from './screens/WantList.jsx'
+import TradeShowScreen from './screens/TradeShow.jsx'
 
 const TWEAK_DEFAULTS = {
   "theme": "dark",
@@ -272,10 +273,11 @@ export default function App() {
     case 'onboarding':    Screen = OnboardingScreen ?? SettingsScreen; break
     case 'add-profile':   Screen = AddProfileScreen; break
     case 'want-list':     Screen = WantListScreen; break
+    case 'trade-show':    Screen = TradeShowScreen; break
     default:              Screen = HomeScreen
   }
 
-  const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan' || top.screen === 'want-list' || top.screen === 'add-profile'
+  const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan' || top.screen === 'want-list' || top.screen === 'add-profile' || top.screen === 'trade-show'
 
   if (!authed) {
     return <LoginScreen onLogin={handleLogin} />

@@ -573,6 +573,7 @@ def _row_to_profile(row) -> dict:
         "name": row["name"],
         "account_id": str(row["account_id"]) if row["account_id"] else None,
         "avatar_color": row.get("avatar_color", "#34d399"),
+        "trade_mode": bool(row.get("trade_mode", False)),
     }
 
 
@@ -580,7 +581,7 @@ def list_profiles(account_id: str) -> list[dict]:
     with connect() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, name, account_id, avatar_color FROM users WHERE account_id = %s ORDER BY id",
+            "SELECT id, name, account_id, avatar_color, trade_mode FROM users WHERE account_id = %s ORDER BY id",
             (account_id,),
         )
         return [_row_to_profile(r) for r in cur.fetchall()]
@@ -590,7 +591,7 @@ def get_profile(account_id: str, profile_id: int) -> dict | None:
     with connect() as conn:
         cur = conn.cursor()
         cur.execute(
-            "SELECT id, name, account_id, avatar_color FROM users WHERE id = %s AND account_id = %s",
+            "SELECT id, name, account_id, avatar_color, trade_mode FROM users WHERE id = %s AND account_id = %s",
             (profile_id, account_id),
         )
         row = cur.fetchone()
@@ -602,7 +603,7 @@ def create_profile(account_id: str, name: str, avatar_color: str = "#34d399") ->
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO users (account_id, name, avatar_color) VALUES (%s, %s, %s) "
-            "RETURNING id, name, account_id, avatar_color",
+            "RETURNING id, name, account_id, avatar_color, trade_mode",
             (account_id, name, avatar_color),
         )
         return _row_to_profile(cur.fetchone())
@@ -613,6 +614,58 @@ def count_profiles(account_id: str) -> int:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM users WHERE account_id = %s", (account_id,))
         return cur.fetchone()["count"]
+
+
+def set_trade_mode(profile_id: int, enabled: bool) -> None:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET trade_mode = %s WHERE id = %s",
+            (enabled, profile_id),
+        )
+
+
+def get_public_profile(profile_id: int) -> dict | None:
+    """Return profile + want list for public trade show view (no auth required)."""
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, name, avatar_color, trade_mode FROM users WHERE id = %s AND trade_mode = TRUE",
+            (profile_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        profile = {
+            "id": row["id"],
+            "name": row["name"],
+            "avatar_color": row.get("avatar_color", "#34d399"),
+        }
+        # Fetch wishlist cards for this profile
+        cur.execute(
+            """
+            SELECT c.id, c.name, c.set_name, c.card_code, c.language, c.current_market_price, c.image_url
+            FROM cards c
+            JOIN card_tags ct ON ct.card_id = c.id
+            JOIN tags t ON t.id = ct.tag_id
+            WHERE c.user_id = %s AND LOWER(t.name) = 'wishlist'
+            ORDER BY c.name
+            """,
+            (profile_id,),
+        )
+        wants = [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "set": r["set_name"],
+                "code": r["card_code"],
+                "lang": "JP" if r.get("language") == "japanese" else "EN",
+                "usd": float(r["current_market_price"]) if r["current_market_price"] else None,
+                "image_url": r.get("image_url"),
+            }
+            for r in cur.fetchall()
+        ]
+        return {"profile": profile, "wants": wants}
 
 
 def get_scan_count(account_id: str, month: str) -> int:

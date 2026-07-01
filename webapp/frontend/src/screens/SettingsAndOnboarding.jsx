@@ -10,6 +10,8 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState(null);
   const [health, setHealth] = useState(null);
+  const [tradeMode, setTradeMode] = useState(currentUser?.trade_mode ?? false);
+  const [tradeModeLoading, setTradeModeLoading] = useState(false);
 
   useEffect(() => {
     if (backend?.online === false || !api.getHealth) return;
@@ -84,6 +86,51 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
             </button>
           </div>
         </div>
+
+        <SettingsSection label="Trade Show">
+          <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 500 }}>Trade Show Mode</div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Share your want list via QR code</div>
+            </div>
+            <button
+              className="tap"
+              disabled={tradeModeLoading}
+              onClick={async () => {
+                const next = !tradeMode;
+                setTradeModeLoading(true);
+                try {
+                  await api.setTradeMode(next);
+                  setTradeMode(next);
+                  if (next) navigate('trade-show');
+                } catch(e) {
+                  console.error(e);
+                } finally {
+                  setTradeModeLoading(false);
+                }
+              }}
+              style={{
+                width: 44, height: 26, borderRadius: 13, border: 'none', cursor: 'pointer',
+                background: tradeMode ? 'var(--accent)' : 'var(--bg-3)',
+                position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+              }}>
+              <div style={{
+                position: 'absolute', top: 3, left: tradeMode ? 21 : 3,
+                width: 20, height: 20, borderRadius: 10, background: '#fff',
+                transition: 'left 0.2s', boxShadow: '0 1px 4px oklch(0 0 0 / 0.25)',
+              }}/>
+            </button>
+          </div>
+          {tradeMode && (
+            <button className="tap" onClick={() => navigate('trade-show')} style={{
+              width: '100%', padding: '10px 14px', borderTop: '1px solid var(--hairline-soft)',
+              background: 'transparent', color: 'var(--accent)', fontSize: 13, fontWeight: 600,
+              textAlign: 'left',
+            }}>
+              Show QR code →
+            </button>
+          )}
+        </SettingsSection>
 
         <SettingsSection label="Display">
           <SettingsRow label="Theme" value={tweaks.theme === 'dark' ? 'Dark' : 'Light'}/>
