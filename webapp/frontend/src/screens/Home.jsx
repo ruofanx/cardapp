@@ -15,6 +15,11 @@ const RANGE_META = {
 function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, backend }) {
   const cur = tweaks.currency;
   const [valueHidden, setValueHidden] = useState(false);
+  const [alerts, setAlerts] = useState([]);
+  useEffect(() => {
+    if (backend?.online === false || !api.getAlerts) return
+    api.getAlerts().then(a => setAlerts(Array.isArray(a) ? a : [])).catch(() => {})
+  }, [backend?.online, collection]);
   const [range, setRange] = useState('1M');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
@@ -236,6 +241,13 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
             </button>
             <button className="tap" style={{ position: 'relative' }} aria-label="Notifications" onClick={() => navigate('browse')}>
               <Icon name="bell" size={20}/>
+              {alerts.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: -2, right: -2,
+                  width: 8, height: 8, borderRadius: 4,
+                  background: 'var(--pos)', border: '1.5px solid var(--bg)',
+                }}/>
+              )}
             </button>
             {/* Profile avatar — opens You / settings */}
             <button className="tap" onClick={() => navigate('settings')} style={{
@@ -296,6 +308,24 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Price alert banner */}
+        {alerts.length > 0 && (
+          <div style={{ margin: '12px 16px 0', padding: '10px 14px', borderRadius: 12, background: 'oklch(0.30 0.12 145 / 0.2)', border: '1px solid oklch(0.50 0.15 145 / 0.35)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Icon name="bell" size={16} style={{ color: 'var(--pos)', flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--pos)' }}>
+                {alerts.length} price alert{alerts.length !== 1 ? 's' : ''} triggered
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--ink-3)', marginLeft: 6 }}>
+                {alerts.map(a => a.name).slice(0, 2).join(', ')}{alerts.length > 2 ? ` +${alerts.length - 2} more` : ''}
+              </span>
+            </div>
+            <button className="tap" onClick={() => navigate('browse')} style={{ fontSize: 12, fontWeight: 600, color: 'var(--pos)', flexShrink: 0, background: 'transparent' }}>
+              View →
+            </button>
           </div>
         )}
 

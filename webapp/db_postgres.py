@@ -24,7 +24,7 @@ _CARD_COLUMNS = frozenset({
     "name", "set_name", "card_number", "language", "variant", "condition",
     "is_graded", "grade_company", "grade", "purchase_price", "purchase_date",
     "current_market_price", "last_priced_at", "image_url", "photo_path",
-    "notes", "product_type",
+    "notes", "product_type", "alert_price",
 })
 
 _TAG_COLUMNS = frozenset({"name", "color", "is_trade_tag"})
@@ -70,6 +70,7 @@ class Card:
     purchase_price: Optional[float] = None
     purchase_date: Optional[str] = None
     current_market_price: Optional[float] = None
+    alert_price: Optional[float] = None
     last_priced_at: Optional[str] = None
     image_url: Optional[str] = None
     photo_path: Optional[str] = None
@@ -644,7 +645,7 @@ def get_public_profile(profile_id: int) -> dict | None:
         # Fetch wishlist cards for this profile
         cur.execute(
             """
-            SELECT c.id, c.name, c.set_name, c.card_code, c.language, c.current_market_price, c.image_url
+            SELECT c.id, c.name, c.set_name, c.card_number, c.language, c.current_market_price, c.image_url
             FROM cards c
             JOIN card_tags ct ON ct.card_id = c.id
             JOIN tags t ON t.id = ct.tag_id
@@ -658,7 +659,7 @@ def get_public_profile(profile_id: int) -> dict | None:
                 "id": r["id"],
                 "name": r["name"],
                 "set": r["set_name"],
-                "code": r["card_code"],
+                "code": r["card_number"],
                 "lang": "JP" if r.get("language") == "japanese" else "EN",
                 "usd": float(r["current_market_price"]) if r["current_market_price"] else None,
                 "image_url": r.get("image_url"),
@@ -666,6 +667,37 @@ def get_public_profile(profile_id: int) -> dict | None:
             for r in cur.fetchall()
         ]
         return {"profile": profile, "wants": wants}
+
+
+def get_triggered_alerts(user_id: int) -> list[dict]:
+    """Return cards where alert_price is set and current_market_price has dropped to or below it."""
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, name, set_name, card_number, current_market_price, alert_price, image_url
+            FROM cards
+            WHERE user_id = %s
+              AND alert_price IS NOT NULL
+              AND current_market_price IS NOT NULL
+              AND current_market_price <= alert_price
+            ORDER BY (alert_price - current_market_price) DESC
+            """,
+            (user_id,),
+        )
+        return [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "set": r["set_name"],
+                "code": r["card_number"],
+                "usd": float(r["current_market_price"]),
+                "alert_price": float(r["alert_price"]),
+                "image_url": r.get("image_url"),
+                "savings": float(r["alert_price"]) - float(r["current_market_price"]),
+            }
+            for r in cur.fetchall()
+        ]
 
 
 def get_scan_count(account_id: str, month: str) -> int:

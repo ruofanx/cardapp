@@ -145,6 +145,7 @@ export function normalizeCard(c) {
     last_priced_at: c.last_priced_at ?? c.last_refreshed ?? null,
     notes:     c.notes ?? null,
     tags:      c.tags ?? [],
+    alert_price: num(c.alert_price) ?? null,
     raw:       c,
   }
 }
@@ -221,6 +222,29 @@ export const api = {
 
   async setTradeMode(enabled) {
     return request('/api/profiles/trade-mode', { method: 'PATCH', body: { enabled } })
+  },
+
+  async getAlerts() {
+    return request('/api/profile/alerts')
+  },
+
+  async setAlertPrice(cardId, alertPrice) {
+    return request(`/api/cards/${cardId}`, { method: 'PATCH', body: { alert_price: alertPrice } })
+  },
+
+  async exportCollection() {
+    const url = `${state.base}/api/profile/export`
+    const res = await fetch(url, { headers: { ..._authHeader() } })
+    if (!res.ok) throw new Error(`Export failed: ${res.status}`)
+    const blob = await res.blob()
+    const disposition = res.headers.get('content-disposition') || ''
+    const match = disposition.match(/filename="?([^"]+)"?/)
+    const filename = match ? match[1] : 'pokecollect-export.csv'
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(a.href)
   },
 
   async getPublicProfile(profileId) {

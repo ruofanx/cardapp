@@ -936,6 +936,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
                   <div className="mono" style={{ fontSize: 13, fontWeight: 500, marginTop: 1 }}>{fmtUSD(c.purchase_price)}</div>
                 </div>
               )}
+              <AlertPriceButton card={c} updateCard={updateCard} />
             </div>
           </div>
         </div>
@@ -1813,6 +1814,73 @@ function VariantsTab({ card, cur, tweaks, navigate }) {
       <div style={{ height: 100 }}/>
     </div>
   );
+}
+
+function AlertPriceButton({ card, updateCard }) {
+  const { useState: us, useRef: ur } = React
+  const [editing, setEditing] = us(false)
+  const [val, setVal] = us('')
+  const [saving, setSaving] = us(false)
+  const inputRef = ur(null)
+
+  if (!card?.id) return null
+
+  async function save() {
+    const price = parseFloat(val)
+    if (isNaN(price) || price <= 0) { clear(); return }
+    setSaving(true)
+    try {
+      await updateCard(card.id, { alert_price: price })
+      setEditing(false)
+    } finally { setSaving(false) }
+  }
+
+  async function clear() {
+    setSaving(true)
+    try {
+      await updateCard(card.id, { alert_price: null })
+      setEditing(false)
+    } finally { setSaving(false) }
+  }
+
+  const isTriggered = card.alert_price != null && card.usd != null && card.usd <= card.alert_price
+
+  return (
+    <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--hairline-soft)' }}>
+      <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>Price Alert</div>
+      {!editing ? (
+        <button className="tap row gap-2" onClick={() => { setVal(card.alert_price ? String(card.alert_price) : ''); setEditing(true); setTimeout(() => inputRef.current?.focus(), 50) }} style={{
+          background: 'transparent', padding: 0, alignItems: 'center',
+          color: isTriggered ? 'var(--pos)' : card.alert_price ? 'var(--ink-2)' : 'var(--ink-3)',
+          fontSize: 13, fontWeight: 500,
+        }}>
+          <Icon name="bell" size={13} style={{ flexShrink: 0 }} />
+          {card.alert_price
+            ? <span className="mono">{isTriggered ? '✓ ' : ''}{fmtUSD(card.alert_price)}</span>
+            : <span>Set target price</span>}
+        </button>
+      ) : (
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <span style={{ fontSize: 13, color: 'var(--ink-3)' }}>$</span>
+          <input
+            ref={inputRef}
+            type="number" min="0" step="0.01"
+            value={val}
+            onChange={e => setVal(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
+            placeholder="0.00"
+            style={{ width: 70, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--hairline-soft)', background: 'var(--bg-1)', color: 'var(--ink)', fontSize: 13, outline: 'none' }}
+          />
+          <button className="tap" onClick={save} disabled={saving} style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', background: 'transparent' }}>
+            {saving ? '…' : 'Set'}
+          </button>
+          {card.alert_price && (
+            <button className="tap" onClick={clear} disabled={saving} style={{ fontSize: 12, color: 'var(--neg)', background: 'transparent' }}>Clear</button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default DetailScreen

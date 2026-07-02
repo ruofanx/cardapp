@@ -16,6 +16,8 @@ Static frontend served from ./static/index.html at /.
 """
 from __future__ import annotations
 
+import csv
+import io
 import sys
 import os
 import re
@@ -28,7 +30,7 @@ log = logging.getLogger(__name__)
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -290,6 +292,58 @@ def get_public_profile(profile_id: int):
     if not data:
         raise HTTPException(status_code=404, detail="Profile not found or not in trade show mode")
     return data
+
+
+@app.get("/api/profile/alerts")
+def get_price_alerts(profile: dict = Depends(get_current_profile)):
+    """Return cards whose current price has hit or dropped below the user's alert price."""
+    return db.get_triggered_alerts(profile["id"])
+
+
+@app.get("/api/profile/export")
+def export_collection(profile: dict = Depends(get_current_profile)):
+    """Download the current profile's full collection as CSV."""
+    cards = db.list_cards(profile["id"])
+    profile_name = profile.get("name", "collection")
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    filename = f"pokecollect-{profile_name}-{date_str}.csv".replace(" ", "-")
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Name", "Set", "Number", "Language", "Condition",
+        "Graded", "Grader", "Grade",
+        "Current Price (USD)", "Purchase Price (USD)", "Gain/Loss (%)",
+        "Tags", "Image URL", "Added",
+    ])
+    for c in cards:
+        tags = ", ".join(t if isinstance(t, str) else (t.get("name") or "") for t in (c.tags or []))
+        gain_loss = ""
+        if c.current_market_price and c.purchase_price and c.purchase_price > 0:
+            gain_loss = f"{((c.current_market_price - c.purchase_price) / c.purchase_price * 100):.1f}%"
+        writer.writerow([
+            c.name or "",
+            c.set_name or "",
+            c.card_code or "",
+            "JP" if c.language == "japanese" else "EN",
+            c.condition or "NM",
+            "Yes" if c.is_graded else "No",
+            c.grade_company or "",
+            c.grade or "",
+            f"{c.current_market_price:.2f}" if c.current_market_price else "",
+            f"{c.purchase_price:.2f}" if c.purchase_price else "",
+            gain_loss,
+            tags,
+            c.image_url or "",
+            c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
+        ])
+
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/users")

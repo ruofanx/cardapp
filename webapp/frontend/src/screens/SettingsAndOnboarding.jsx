@@ -171,6 +171,7 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
         <SettingsSection label="About">
           <SettingsRow label="Collection" value={`${collection.length} card${collection.length === 1 ? '' : 's'} · ${setsCount} set${setsCount === 1 ? '' : 's'}`}/>
           <SettingsRow label="Pricing engines" value="eBay Browse · PriceCharting · Cardmarket · TCGplayer"/>
+          <ExportRow />
         </SettingsSection>
 
         <div style={{ padding: '8px 16px 24px' }}>
@@ -186,6 +187,38 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
       </div>
     </div>
   );
+}
+
+function ExportRow() {
+  const [state, setState] = useState('idle') // idle | loading | done | error
+  async function doExport() {
+    setState('loading')
+    try {
+      await api.exportCollection()
+      setState('done')
+      setTimeout(() => setState('idle'), 3000)
+    } catch(e) {
+      setState('error')
+      setTimeout(() => setState('idle'), 3000)
+    }
+  }
+  const label = { idle: 'Export CSV', loading: 'Preparing…', done: 'Downloaded!', error: 'Export failed' }[state]
+  const color = state === 'done' ? 'var(--pos)' : state === 'error' ? 'var(--neg)' : 'var(--accent)'
+  return (
+    <div style={{ padding: '10px 14px', borderTop: '1px solid var(--hairline-soft)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 500 }}>Export collection</div>
+        <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 1 }}>Download as CSV spreadsheet</div>
+      </div>
+      <button className="tap" onClick={doExport} disabled={state === 'loading'} style={{
+        padding: '7px 14px', borderRadius: 10, border: 'none', cursor: state === 'loading' ? 'default' : 'pointer',
+        background: color, color: '#fff', fontSize: 12, fontWeight: 700,
+        opacity: state === 'loading' ? 0.7 : 1, transition: 'all 0.2s', flexShrink: 0,
+      }}>
+        {label}
+      </button>
+    </div>
+  )
 }
 
 function SettingsSection({ label, children }) {
