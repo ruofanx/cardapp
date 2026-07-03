@@ -53,6 +53,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    if (!authed) return   // wait for Supabase session before fetching
     let cancelled = false
     ;(async () => {
       try {
@@ -72,7 +73,7 @@ export default function App() {
       }
     })()
     return () => { cancelled = true }
-  }, [reloadCollection])
+  }, [reloadCollection, authed])
 
   const navigate = useCallback((screen, params = {}) => {
     const tabScreens = ['home', 'browse', 'scan', 'trade', 'settings']
