@@ -436,7 +436,6 @@ def detach_tag(card_id: int, tag_id: int):
     return _card_to_dict(db.get_card(card_id))
 
 
-@app.post("/api/users/{user_id}/cards")
 async def _backfill_history_task(card_id: int, name: str, set_name: str, card_number: str,
                                   language: str, variant: Optional[str], product_type: str) -> None:
     """Fire-and-forget async background task: seed price_history from PriceCharting chart data."""
@@ -456,6 +455,7 @@ async def _backfill_history_task(card_id: int, name: str, set_name: str, card_nu
         log.debug("background history backfill for card %s failed: %s", card_id, e)
 
 
+@app.post("/api/users/{user_id}/cards")
 def create_card(user_id: int, payload: CardCreate, background_tasks: BackgroundTasks,
                 account: dict = Depends(get_current_account)):
     if not db.get_user(user_id):
