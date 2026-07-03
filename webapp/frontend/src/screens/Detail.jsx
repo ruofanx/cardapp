@@ -166,6 +166,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   const [editCardNumber, setEditCardNumber] = useState('');
   const [editTags, setEditTags] = useState([]);
   const [newTag, setNewTag] = useState('');
+  const [editNotes, setEditNotes] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const photoInputRef = useRef(null);
   const userPhotosList = useUserPhotos(params.card?.id);
@@ -401,6 +402,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     setEditSetName(c.set || '');
     setEditCardNumber(c.code || '');
     setEditTags(normalizeTagList(c.tags));
+    setEditNotes(c.notes || '');
     setNewTag('');
     setEditing(true);
   };
@@ -433,6 +435,8 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     const tagsChanged = origTags.length !== editTags.length
       || origTags.some((t, i) => t !== editTags[i]);
     if (tagsChanged) fields.tags = editTags;
+    const nextNotes = editNotes.trim();
+    if (nextNotes !== (c.notes || '').trim()) fields.notes = nextNotes || null;
 
     if (Object.keys(fields).length === 0) { setEditing(false); return; }
     setSavingEdit(true);
@@ -750,6 +754,26 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
               })()}
             </div>
 
+            {/* Notes */}
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                Notes
+              </div>
+              <textarea
+                value={editNotes}
+                onChange={e => setEditNotes(e.target.value)}
+                placeholder="Provenance, trades, show notes…"
+                rows={3}
+                style={{
+                  width: '100%', background: 'var(--bg-2)', color: 'var(--ink)',
+                  border: '1px solid var(--hairline-soft)', borderRadius: 10,
+                  padding: '10px 12px', fontSize: 13, outline: 'none',
+                  boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit',
+                  lineHeight: 1.5,
+                }}
+              />
+            </div>
+
             {/* Card art — show current image + a reset for cards where the
                 Pokemon TCG API attached the wrong art (Movie 2 promos like
                 Ancient Mew, regional exclusives, etc. that have no exact
@@ -937,6 +961,12 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
                 </div>
               )}
               <AlertPriceButton card={c} updateCard={updateCard} />
+              {c.notes && (
+                <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--hairline-soft)' }}>
+                  <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 3 }}>Notes</div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{c.notes}</div>
+                </div>
+              )}
             </div>
           </div>
         </div>

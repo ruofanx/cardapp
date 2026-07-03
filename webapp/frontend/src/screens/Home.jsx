@@ -239,7 +239,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
             <button className="tap" onClick={() => setSearchOpen(v => !v)} style={{ color: searchOpen ? 'var(--accent)' : 'inherit' }}>
               <Icon name="search" size={20}/>
             </button>
-            <button className="tap" style={{ position: 'relative' }} aria-label="Notifications" onClick={() => navigate('browse')}>
+            <button className="tap" style={{ position: 'relative' }} aria-label="Notifications" onClick={() => navigate('alerts')}>
               <Icon name="bell" size={20}/>
               {alerts.length > 0 && (
                 <div style={{
@@ -323,7 +323,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
                 {alerts.map(a => a.name).slice(0, 2).join(', ')}{alerts.length > 2 ? ` +${alerts.length - 2} more` : ''}
               </span>
             </div>
-            <button className="tap" onClick={() => navigate('browse')} style={{ fontSize: 12, fontWeight: 600, color: 'var(--pos)', flexShrink: 0, background: 'transparent' }}>
+            <button className="tap" onClick={() => navigate('alerts')} style={{ fontSize: 12, fontWeight: 600, color: 'var(--pos)', flexShrink: 0, background: 'transparent' }}>
               View →
             </button>
           </div>

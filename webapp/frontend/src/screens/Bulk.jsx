@@ -9,6 +9,9 @@ function BulkScreen({ tweaks, navigate, scanQueue, setScanQueue, addToCollection
   const bulkCount = scanQueue.filter(c => c.bulk).length;
   const [committing, setCommitting] = useState(false);
 
+  const setCondition = (i, cond) =>
+    setScanQueue(q => q.map((c, j) => j === i ? { ...c, condition: cond } : c));
+
   const removeAt = (i) => setScanQueue(q => q.filter((_, j) => j !== i));
   const commitAll = async () => {
     if (committing) return;
@@ -74,11 +77,11 @@ function BulkScreen({ tweaks, navigate, scanQueue, setScanQueue, addToCollection
                     <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
                     <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{c.code} · {c.set}</div>
                     <div className="row gap-1" style={{ marginTop: 4 }}>
-                      {['NM', 'LP', 'MP', 'HP'].map(g => (
-                        <button key={g} className="tap" style={{
+                      {['NM', 'LP', 'MP', 'HP', 'DMG'].map(g => (
+                        <button key={g} className="tap" onClick={() => setCondition(i, g)} style={{
                           padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 600,
-                          background: g === c.condition ? 'var(--bg-3)' : 'transparent',
-                          color: g === c.condition ? 'var(--ink)' : 'var(--ink-3)',
+                          background: g === (c.condition || 'NM') ? 'var(--bg-3)' : 'transparent',
+                          color: g === (c.condition || 'NM') ? 'var(--ink)' : 'var(--ink-3)',
                           border: '1px solid var(--hairline-soft)',
                         }}>{g}</button>
                       ))}
