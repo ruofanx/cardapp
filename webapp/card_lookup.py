@@ -341,6 +341,14 @@ KNOWN_SET_TERMS = [
     "unbroken bonds", "cosmic eclipse",
 ]
 
+# Some user-friendly set terms map to set IDs rather than set names because
+# the API set name is ambiguous. "Base Set" is stored as "Base" in the API —
+# set.name:"base set*" matches "Base Set 2" and "Expedition Base Set" but
+# NOT the original "Base" (id=base1). Using set.id gives an exact match.
+_SET_TERM_TO_ID: dict[str, str] = {
+    "base set": "base1",
+}
+
 
 def _expand_alias(query: str) -> str:
     """If the query exactly matches a known nickname, return its expansion."""
@@ -687,12 +695,19 @@ async def search_cards(query: str, limit: int = 20,
         if rarity:
             clauses.append(f'rarity:"{rarity}"')
         if set_hint:
-            # Trailing-wildcard prefix match. The Pokemon TCG API 400s on
-            # leading-wildcard patterns like `"*foo*"` (Lucene doesn't allow
-            # `*` inside quoted phrases when it's the first char). `"foo*"`
-            # works and is enough to match "Team Rocket Returns" from
-            # "team rocket", "Base Set 2" from "base", etc.
-            clauses.append(f'set.name:"{set_hint}*"')
+            if set_hint in _SET_TERM_TO_ID:
+                # Some sets have ambiguous names in the API (e.g. the original
+                # Base Set is named "Base", so "base set*" would also match
+                # "Base Set 2" and "Expedition Base Set"). Use set.id for a
+                # precise match when we have a known mapping.
+                clauses.append(f'set.id:"{_SET_TERM_TO_ID[set_hint]}"')
+            else:
+                # Trailing-wildcard prefix match. The Pokemon TCG API 400s on
+                # leading-wildcard patterns like `"*foo*"` (Lucene doesn't allow
+                # `*` inside quoted phrases when it's the first char). `"foo*"`
+                # works and is enough to match "Team Rocket Returns" from
+                # "team rocket", "Base Set 2" from "base", etc.
+                clauses.append(f'set.name:"{set_hint}*"')
         if subtype:
             clauses.append(f'subtypes:"{subtype}"')
 
