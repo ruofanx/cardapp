@@ -638,6 +638,10 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   // older XY/BW-era sets like Wild Blaze). Resets when the selected card
   // changes so picking a different candidate starts clean.
   const [isFirstEd, setIsFirstEd] = useState(false);
+  const [condition, setCondition] = useState('NM');
+  const [isGraded, setIsGraded] = useState(false);
+  const [grader, setGrader] = useState('PSA');
+  const [grade, setGrade] = useState('');
 
   const uniq = (arr) => Array.from(new Set(arr.filter(Boolean)));
   const setOptions    = uniq(candidates.map(c => c.set));
@@ -671,11 +675,11 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const paidValue = purchasePrice !== '' && Number.isFinite(paidNum) && paidNum >= 0 ? paidNum : null;
 
   const defaultCardProps = card ? {
-    condition: 'NM',
+    condition: isGraded ? 'NM' : condition,
     lang: card.lang || 'EN',
-    grader: null,
-    grade: null,
-    is_graded: false,
+    grader: isGraded ? grader : null,
+    grade: isGraded && grade ? Number(grade) : null,
+    is_graded: isGraded,
     usd: card.usd,
     purchase_price: paidValue,
     tags: selectedTags,
@@ -882,6 +886,56 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
           }}>
             {isFirstEd ? '✓ 1st Edition' : '1st Edition?  Tap to mark'}
           </button>
+        )}
+
+        {/* Condition + Graded */}
+        {card && !api?.isSealedProduct?.(card) && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {/* Condition chips — hidden when graded */}
+            {!isGraded && (
+              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+                <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em', flexShrink: 0 }}>COND</div>
+                {['NM','LP','MP','HP','DMG'].map(c => (
+                  <Chip key={c} active={condition === c} onClick={() => setCondition(c)}>{c}</Chip>
+                ))}
+              </div>
+            )}
+            {/* Graded toggle */}
+            <button className="tap" onClick={() => setIsGraded(v => !v)} style={{
+              width: '100%', padding: '8px 12px', borderRadius: 12,
+              background: isGraded ? 'oklch(0.38 0.12 260)' : 'var(--bg-2)',
+              color: isGraded ? '#fff' : 'var(--ink-3)',
+              fontWeight: 600, fontSize: 12, textAlign: 'left',
+              border: isGraded ? '1.5px solid oklch(0.55 0.15 260)' : '1.5px solid var(--hairline-soft)',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span style={{ fontSize: 16 }}>{isGraded ? '🏆' : '🏷️'}</span>
+              {isGraded ? 'Graded card' : 'Mark as graded?'}
+            </button>
+            {/* Grader + grade inputs */}
+            {isGraded && (
+              <div className="row" style={{ gap: 8 }}>
+                <div className="row" style={{ gap: 4, flexShrink: 0 }}>
+                  {['PSA','CGC','BGS','SGC'].map(g => (
+                    <Chip key={g} active={grader === g} onClick={() => setGrader(g)}>{g}</Chip>
+                  ))}
+                </div>
+                <input
+                  type="number" inputMode="decimal" step="0.5" min="1" max="10"
+                  value={grade}
+                  onChange={e => setGrade(e.target.value)}
+                  placeholder="Grade"
+                  style={{
+                    width: 70, padding: '5px 8px', borderRadius: 8, flexShrink: 0,
+                    background: 'var(--bg-2)', color: 'var(--ink)',
+                    border: '1px solid var(--hairline-soft)',
+                    fontSize: 13, fontWeight: 700, fontFamily: 'var(--mono)',
+                    outline: 'none', textAlign: 'center',
+                  }}
+                />
+              </div>
+            )}
+          </div>
         )}
 
         {/* Paid price + tag picker */}
