@@ -47,10 +47,28 @@ def run_migrations():
     """Idempotent schema migrations — safe to run on every startup."""
     with connect() as conn:
         cur = conn.cursor()
+        # Core tables that may not exist in Supabase (not in schema.sql)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id            TEXT PRIMARY KEY,
+                email         TEXT,
+                plan          TEXT NOT NULL DEFAULT 'free',
+                trial_ends_at TIMESTAMPTZ
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scan_usage (
+                account_id  TEXT NOT NULL,
+                month       TEXT NOT NULL,
+                scan_count  INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (account_id, month)
+            )
+        """)
+        # Column additions for existing tables
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trade_mode BOOLEAN DEFAULT FALSE")
-        cur.execute("ALTER TABLE cards  ADD COLUMN IF NOT EXISTS alert_price NUMERIC")
-        cur.execute("ALTER TABLE users  ADD COLUMN IF NOT EXISTS avatar_color TEXT DEFAULT '#34d399'")
-        cur.execute("ALTER TABLE users  ADD COLUMN IF NOT EXISTS account_id TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color TEXT DEFAULT '#34d399'")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS account_id TEXT")
+        cur.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS alert_price NUMERIC")
         conn.commit()
 
 
