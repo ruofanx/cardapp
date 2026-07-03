@@ -582,6 +582,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
           capturedPhotoUrl={capturedPhotoUrl}
           capturedPhotoFile={capturedPhotoFile}
           existingTags={Array.from(new Set((collection || []).flatMap(c => c.tags || []).filter(Boolean))).sort()}
+          collection={collection}
           onAddToCollection={handleAddToCollection}
           onAddWishlist={handleAddWishlist}
           onSkip={handleSkip}
@@ -611,7 +612,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
 
 const SUGGESTED_TAGS = ['for trade', 'binder', 'pc', 'graded', 'gift'];
 
-function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, existingTags, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
+function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, existingTags, collection, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
   const cur = tweaks.currency;
   const [picked, setPicked] = useState(0);
   const [setFilter, setSetFilter] = useState('');
