@@ -581,6 +581,14 @@ def _row_to_profile(row) -> dict:
 def list_profiles(account_id: str) -> list[dict]:
     with connect() as conn:
         cur = conn.cursor()
+        # Claim any legacy profiles that were seeded without an account_id.
+        # Safe for a single-account family app; runs as a no-op once all
+        # profiles are claimed.
+        cur.execute(
+            "UPDATE users SET account_id = %s WHERE account_id IS NULL",
+            (account_id,),
+        )
+        conn.commit()
         cur.execute(
             "SELECT id, name, account_id, avatar_color, trade_mode FROM users WHERE account_id = %s ORDER BY id",
             (account_id,),
