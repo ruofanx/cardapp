@@ -146,7 +146,9 @@ export function normalizeCard(c) {
     notes:     c.notes ?? null,
     purchase_date: c.purchase_date ?? null,
     created_at: c.created_at ?? null,
-    tags:      c.tags ?? [],
+    tags:      (c.tags || []).map(t =>
+      typeof t === 'string' ? t : (t?.name || t?.label || '')
+    ).filter(Boolean),
     alert_price: num(c.alert_price) ?? null,
     raw:       c,
   }

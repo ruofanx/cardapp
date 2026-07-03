@@ -43,33 +43,38 @@ def connect():
         conn.close()
 
 
+_MIGRATIONS = [
+    """CREATE TABLE IF NOT EXISTS accounts (
+        id            TEXT PRIMARY KEY,
+        email         TEXT,
+        plan          TEXT NOT NULL DEFAULT 'free',
+        trial_ends_at TIMESTAMPTZ
+    )""",
+    """CREATE TABLE IF NOT EXISTS scan_usage (
+        account_id  TEXT NOT NULL,
+        month       TEXT NOT NULL,
+        scan_count  INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (account_id, month)
+    )""",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS trade_mode BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color TEXT DEFAULT '#34d399'",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS account_id TEXT",
+    "ALTER TABLE cards ADD COLUMN IF NOT EXISTS alert_price NUMERIC",
+    "ALTER TABLE cards ADD COLUMN IF NOT EXISTS notes TEXT",
+    "ALTER TABLE cards ADD COLUMN IF NOT EXISTS purchase_date TEXT",
+]
+
+import logging as _logging
+_log = _logging.getLogger(__name__)
+
 def run_migrations():
-    """Idempotent schema migrations — safe to run on every startup."""
-    with connect() as conn:
-        cur = conn.cursor()
-        # Core tables that may not exist in Supabase (not in schema.sql)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id            TEXT PRIMARY KEY,
-                email         TEXT,
-                plan          TEXT NOT NULL DEFAULT 'free',
-                trial_ends_at TIMESTAMPTZ
-            )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS scan_usage (
-                account_id  TEXT NOT NULL,
-                month       TEXT NOT NULL,
-                scan_count  INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (account_id, month)
-            )
-        """)
-        # Column additions for existing tables
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trade_mode BOOLEAN DEFAULT FALSE")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_color TEXT DEFAULT '#34d399'")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS account_id TEXT")
-        cur.execute("ALTER TABLE cards ADD COLUMN IF NOT EXISTS alert_price NUMERIC")
-        conn.commit()
+    """Run each migration independently so one failure doesn't block others."""
+    for sql in _MIGRATIONS:
+        try:
+            with connect() as conn:
+                conn.cursor().execute(sql)
+        except Exception as e:
+            _log.warning("migration skipped (%s): %.120s", type(e).__name__, sql.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -570,31 +575,42 @@ def portfolio_summary(user_id: int) -> PortfolioSummary:
 # Accounts & scan usage
 # ---------------------------------------------------------------------------
 
+def _fallback_account(uid: str, email: str = "") -> dict:
+    return {"id": uid, "email": email, "plan": "free", "trial_ends_at": None}
+
 def get_account(uid: str) -> dict | None:
-    with connect() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, email, plan, trial_ends_at FROM accounts WHERE id = %s", (uid,)
-        )
-        row = cur.fetchone()
-        if not row:
-            return None
-        return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
+    try:
+        with connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, email, plan, trial_ends_at FROM accounts WHERE id = %s", (uid,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
+    except Exception as e:
+        _log.warning("get_account failed (%s), returning fallback", type(e).__name__)
+        return _fallback_account(uid)
 
 
 def create_account(uid: str, email: str) -> dict:
     from datetime import datetime, timezone, timedelta
     trial_ends = datetime.now(timezone.utc) + timedelta(days=14)
-    with connect() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO accounts (id, email, plan, trial_ends_at) VALUES (%s, %s, 'free', %s) "
-            "ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email "
-            "RETURNING id, email, plan, trial_ends_at",
-            (uid, email, trial_ends),
-        )
-        row = cur.fetchone()
-        return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
+    try:
+        with connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO accounts (id, email, plan, trial_ends_at) VALUES (%s, %s, 'free', %s) "
+                "ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email "
+                "RETURNING id, email, plan, trial_ends_at",
+                (uid, email, trial_ends),
+            )
+            row = cur.fetchone()
+            return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
+    except Exception as e:
+        _log.warning("create_account failed (%s), returning fallback", type(e).__name__)
+        return _fallback_account(uid, email)
 
 
 def _row_to_profile(row) -> dict:
@@ -738,23 +754,29 @@ def get_triggered_alerts(user_id: int) -> list[dict]:
 
 
 def get_scan_count(account_id: str, month: str) -> int:
-    with connect() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT scan_count FROM scan_usage WHERE account_id = %s AND month = %s",
-            (account_id, month),
-        )
-        row = cur.fetchone()
-        return row[0] if row else 0
+    try:
+        with connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT scan_count FROM scan_usage WHERE account_id = %s AND month = %s",
+                (account_id, month),
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0
+    except Exception:
+        return 0
 
 
 def increment_scan_count(account_id: str, month: str) -> int:
-    with connect() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO scan_usage (account_id, month, scan_count) VALUES (%s, %s, 1) "
-            "ON CONFLICT (account_id, month) DO UPDATE SET scan_count = scan_usage.scan_count + 1 "
-            "RETURNING scan_count",
-            (account_id, month),
-        )
-        return cur.fetchone()["scan_count"]
+    try:
+        with connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO scan_usage (account_id, month, scan_count) VALUES (%s, %s, 1) "
+                "ON CONFLICT (account_id, month) DO UPDATE SET scan_count = scan_usage.scan_count + 1 "
+                "RETURNING scan_count",
+                (account_id, month),
+            )
+            return cur.fetchone()["scan_count"]
+    except Exception:
+        return 0
