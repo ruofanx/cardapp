@@ -144,6 +144,8 @@ export function normalizeCard(c) {
     photo_path: c.photo_path ?? null,
     last_priced_at: c.last_priced_at ?? c.last_refreshed ?? null,
     notes:     c.notes ?? null,
+    purchase_date: c.purchase_date ?? null,
+    created_at: c.created_at ?? null,
     tags:      c.tags ?? [],
     alert_price: num(c.alert_price) ?? null,
     raw:       c,

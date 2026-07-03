@@ -586,6 +586,24 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
             </div>
           );
         })()}
+
+        {/* Insights link */}
+        {ownedCards.length > 0 && (
+          <div style={{ padding: '16px 16px 0' }}>
+            <button className="tap" onClick={() => navigate('insights')} style={{
+              width: '100%', padding: '14px 16px', borderRadius: 14,
+              background: 'var(--bg-1)', border: '1px solid var(--hairline-soft)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              textAlign: 'left',
+            }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Collection insights</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>Value by set, condition mix, top cards</div>
+              </div>
+              <Icon name="chevron-right" size={18} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

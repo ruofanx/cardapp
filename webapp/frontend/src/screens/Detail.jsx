@@ -167,6 +167,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   const [editTags, setEditTags] = useState([]);
   const [newTag, setNewTag] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [editPurchaseDate, setEditPurchaseDate] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const photoInputRef = useRef(null);
   const userPhotosList = useUserPhotos(params.card?.id);
@@ -403,6 +404,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     setEditCardNumber(c.code || '');
     setEditTags(normalizeTagList(c.tags));
     setEditNotes(c.notes || '');
+    setEditPurchaseDate(c.purchase_date ? c.purchase_date.slice(0, 10) : '');
     setNewTag('');
     setEditing(true);
   };
@@ -437,6 +439,8 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     if (tagsChanged) fields.tags = editTags;
     const nextNotes = editNotes.trim();
     if (nextNotes !== (c.notes || '').trim()) fields.notes = nextNotes || null;
+    const nextDate = editPurchaseDate.trim();
+    if (nextDate !== (c.purchase_date ? c.purchase_date.slice(0, 10) : '')) fields.purchase_date = nextDate || null;
 
     if (Object.keys(fields).length === 0) { setEditing(false); return; }
     setSavingEdit(true);
@@ -692,6 +696,24 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
               <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
                 What you paid. Used for gain/loss vs. median.
               </div>
+            </div>
+
+            {/* Purchase date */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                Purchase date
+              </div>
+              <input
+                type="date"
+                value={editPurchaseDate}
+                onChange={e => setEditPurchaseDate(e.target.value)}
+                style={{
+                  width: '100%', background: 'var(--bg-2)', color: 'var(--ink)',
+                  border: '1px solid var(--hairline-soft)', borderRadius: 10,
+                  padding: '10px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box',
+                  colorScheme: 'dark',
+                }}
+              />
             </div>
 
             {/* Tags */}
