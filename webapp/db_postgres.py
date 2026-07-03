@@ -43,6 +43,17 @@ def connect():
         conn.close()
 
 
+def run_migrations():
+    """Idempotent schema migrations — safe to run on every startup."""
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trade_mode BOOLEAN DEFAULT FALSE")
+        cur.execute("ALTER TABLE cards  ADD COLUMN IF NOT EXISTS alert_price NUMERIC")
+        cur.execute("ALTER TABLE users  ADD COLUMN IF NOT EXISTS avatar_color TEXT DEFAULT '#34d399'")
+        cur.execute("ALTER TABLE users  ADD COLUMN IF NOT EXISTS account_id TEXT")
+        conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses (identical to db.py)
 # ---------------------------------------------------------------------------

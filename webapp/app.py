@@ -77,6 +77,11 @@ def _startup():
         db.init_db()
     except Exception as e:
         log.warning("database initialization failed (continuing with static serve): %s", e)
+    try:
+        if hasattr(db, "run_migrations"):
+            db.run_migrations()
+    except Exception as e:
+        log.warning("schema migration failed: %s", e)
     # Start the daily refresh scheduler (7am CT). Safe if already running.
     try:
         from refresh_job import start_scheduler
