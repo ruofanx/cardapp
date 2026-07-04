@@ -822,53 +822,62 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
           )}
         </div>
 
-        {/* Candidate filmstrip */}
+        {/* Candidate filmstrip — explicit height prevents iOS Safari overflow collapse */}
         {filtered.length === 0 ? (
-          <div style={{ padding: '16px 0', color: 'var(--ink-3)', fontSize: 13, textAlign: 'center' }}>
+          <div style={{ padding: '16px 0', color: 'var(--ink-3)', fontSize: 13, textAlign: 'center', flexShrink: 0 }}>
             No matches with these filters.
           </div>
         ) : (
-          <div style={{ overflowX: 'auto', scrollbarWidth: 'none', marginLeft: -16, marginRight: -16, paddingLeft: 16, paddingRight: 16 }}>
-            <div style={{ display: 'flex', gap: 8, paddingBottom: 4 }}>
-              {filtered.map((cand, i) => {
-                const active = i === safePicked;
-                const candFallback = capturedPhotoUrl || cand.raw?.image_url || cand.raw?.image || null;
-                const candForDisplay = cand.image_url ? cand : { ...cand, image_url: candFallback };
-                const alreadyOwned = cand.id && (collection || []).some(x => x.id === cand.id && !((x.tags || []).some(t => {
-                  const n = typeof t === 'object' ? (t.name || '') : String(t);
-                  return n.toLowerCase() === 'wishlist';
-                })));
-                return (
-                  <button key={cand.id || i} className="tap col" onClick={() => setPicked(i)} style={{
-                    alignItems: 'center', gap: 3,
-                    background: 'none', border: 'none', flexShrink: 0,
-                    padding: '4px 4px 6px', borderRadius: 10,
-                    outline: active ? '2px solid var(--accent)' : '2px solid transparent',
-                    outlineOffset: 1,
-                    position: 'relative',
-                  }}>
-                    <div style={{ position: 'relative' }}>
-                      <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="sm" flat/>
-                      {alreadyOwned && (
-                        <div style={{
-                          position: 'absolute', top: 2, right: 2,
-                          width: 14, height: 14, borderRadius: 7,
-                          background: 'var(--accent)', color: 'var(--accent-ink)',
-                          fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center',
-                          border: '1px solid var(--bg)',
-                        }}>✓</div>
-                      )}
-                    </div>
-                    <div style={{
-                      fontSize: 8, color: active ? 'var(--ink)' : 'var(--ink-3)',
-                      fontWeight: active ? 700 : 400,
-                      width: 64, textAlign: 'center',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>{cand.name}</div>
-                    <Price usd={cand.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="xs"/>
-                  </button>
-                );
-              })}
+          <div style={{ flexShrink: 0, height: 132, position: 'relative' }}>
+            <div style={{
+              position: 'absolute', inset: 0,
+              overflowX: 'auto', overflowY: 'hidden',
+              WebkitOverflowScrolling: 'touch',
+              scrollbarWidth: 'none',
+              marginLeft: -16, marginRight: -16,
+              paddingLeft: 16, paddingRight: 16,
+            }}>
+              <div style={{ display: 'flex', gap: 8, paddingBottom: 4, height: '100%', alignItems: 'flex-start' }}>
+                {filtered.map((cand, i) => {
+                  const active = i === safePicked;
+                  const candFallback = capturedPhotoUrl || cand.raw?.image_url || cand.raw?.image || null;
+                  const candForDisplay = cand.image_url ? cand : { ...cand, image_url: candFallback };
+                  const alreadyOwned = cand.id && (collection || []).some(x => x.id === cand.id && !((x.tags || []).some(t => {
+                    const n = typeof t === 'object' ? (t.name || '') : String(t);
+                    return n.toLowerCase() === 'wishlist';
+                  })));
+                  return (
+                    <button key={cand.id || i} className="tap col" onClick={() => setPicked(i)} style={{
+                      alignItems: 'center', gap: 3,
+                      background: 'none', border: 'none', flexShrink: 0,
+                      padding: '4px 4px 6px', borderRadius: 10,
+                      outline: active ? '2px solid var(--accent)' : '2px solid transparent',
+                      outlineOffset: 1,
+                      position: 'relative',
+                    }}>
+                      <div style={{ position: 'relative' }}>
+                        <CardArt card={candForDisplay} renderMode={tweaks.cardRender} size="sm" flat/>
+                        {alreadyOwned && (
+                          <div style={{
+                            position: 'absolute', top: 2, right: 2,
+                            width: 14, height: 14, borderRadius: 7,
+                            background: 'var(--accent)', color: 'var(--accent-ink)',
+                            fontSize: 9, fontWeight: 700, lineHeight: '14px', textAlign: 'center',
+                            border: '1px solid var(--bg)',
+                          }}>✓</div>
+                        )}
+                      </div>
+                      <div style={{
+                        fontSize: 8, color: active ? 'var(--ink)' : 'var(--ink-3)',
+                        fontWeight: active ? 700 : 400,
+                        width: 64, textAlign: 'center',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>{cand.name}</div>
+                      <Price usd={cand.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="xs"/>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
