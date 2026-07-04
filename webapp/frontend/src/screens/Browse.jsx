@@ -55,6 +55,25 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
   const [setIds, setSetIds] = useState({});       // normName -> TCGdex set id
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [completionSheet, setCompletionSheet] = useState(null); // { setName, setId, owned }
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  const toggleSelect = (id) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const exitSelectMode = () => { setSelectMode(false); setSelectedIds(new Set()); };
+  const handleBulkDelete = async () => {
+    if (!removeCard || selectedIds.size === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    for (const id of selectedIds) {
+      try { await removeCard(id); } catch {}
+    }
+    setBulkDeleting(false);
+    exitSelectMode();
+  };
 
   useEffect(() => {
     if (view !== 'set' || setLogos !== null) return;
@@ -142,11 +161,12 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
         tagNamesOf(c).some(t => t.toLowerCase().includes(q))
       );
     }
-    if (filter === 'cards')  list = list.filter(c => !api.isSealedProduct?.(c));
-    if (filter === 'foil')   list = list.filter(c => c.holo);
-    if (filter === 'jp')     list = list.filter(c => c.lang === 'JP');
-    if (filter === 'graded') list = list.filter(c => c.grade);
-    if (filter === 'sealed') list = list.filter(c => api.isSealedProduct?.(c));
+    if (filter === 'cards')      list = list.filter(c => !api.isSealedProduct?.(c));
+    if (filter === 'foil')       list = list.filter(c => c.holo);
+    if (filter === 'jp')         list = list.filter(c => c.lang === 'JP');
+    if (filter === 'graded')     list = list.filter(c => c.grade);
+    if (filter === 'sealed')     list = list.filter(c => api.isSealedProduct?.(c));
+    if (filter === 'unpriced')   list = list.filter(c => !c.usd);
     // Tag filter — card must have ALL selected tags (case-insensitive).
     if (selectedTags.size > 0) {
       list = list.filter(c => {
@@ -227,6 +247,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
           { id: 'foil', label: 'Foil only' },
           { id: 'jp', label: 'JP' },
           { id: 'graded', label: 'Graded' },
+          { id: 'unpriced', label: 'Unpriced' },
           { id: 'wishlist', label: 'Wishlist', count: wishlistCount },
         ].map(f => (
           <button key={f.id} className="tap" onClick={() => setFilter(f.id)} style={{
@@ -288,7 +309,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
       <div className="row" style={{ padding: '0 16px 8px', justifyContent: 'space-between' }}>
         <div className="row gap-1" style={{ background: 'var(--bg-2)', borderRadius: 8, padding: 2 }}>
           {['grid', 'list', 'set'].map(v => (
-            <button key={v} className="tap" onClick={() => setView(v)} style={{
+            <button key={v} className="tap" onClick={() => { setView(v); exitSelectMode(); }} style={{
               padding: '5px 10px', borderRadius: 6,
               background: view === v ? 'var(--bg-3)' : 'transparent',
               color: view === v ? 'var(--ink)' : 'var(--ink-3)',
@@ -296,15 +317,30 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
             }}>{v}</button>
           ))}
         </div>
-        <button className="tap row gap-1" onClick={() => {
-          const cycle = { value: 'recent', recent: 'az', az: 'change', change: 'value' };
-          setSort(s => cycle[s] || 'value');
-        }} style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-          {sort === 'value' ? 'Sort: Value' : sort === 'recent' ? 'Sort: Recent' : sort === 'az' ? 'Sort: A–Z' : 'Sort: Change'} <Icon name="chevron-down" size={14}/>
-        </button>
+        <div className="row gap-2">
+          {removeCard && !selectMode && items.length > 0 && (
+            <button className="tap" onClick={() => setSelectMode(true)} style={{
+              fontSize: 11, color: 'var(--ink-3)', padding: '4px 8px', borderRadius: 6,
+              background: 'var(--bg-2)',
+            }}>Select</button>
+          )}
+          {!selectMode && (
+            <button className="tap row gap-1" onClick={() => {
+              const cycle = { value: 'recent', recent: 'az', az: 'change', change: 'value' };
+              setSort(s => cycle[s] || 'value');
+            }} style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+              {sort === 'value' ? 'Sort: Value' : sort === 'recent' ? 'Sort: Recent' : sort === 'az' ? 'Sort: A–Z' : 'Sort: Change'} <Icon name="chevron-down" size={14}/>
+            </button>
+          )}
+          {selectMode && (
+            <button className="tap" onClick={exitSelectMode} style={{
+              fontSize: 12, color: 'var(--ink-3)', padding: '4px 8px', borderRadius: 6,
+            }}>Cancel</button>
+          )}
+        </div>
       </div>
 
-      <div className="screen-scroll" style={{ paddingBottom: 24 }}>
+      <div className="screen-scroll" style={{ paddingBottom: selectMode ? 88 : 24 }}>
         {items.length === 0 && (
           <div className="col" style={{ alignItems: 'center', padding: '40px 24px', gap: 12 }}>
             <div className="foil-soft" style={{ width: 64, height: 64, borderRadius: 14 }}/>
@@ -326,17 +362,32 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
             {items.map(c => {
               const dupeKey = `${(c.name || '').toLowerCase()}|${c.set || ''}|${c.code || ''}`;
               const dupeCount = copyCount[dupeKey] || 1;
+              const isSelected = selectedIds.has(c.id);
               return (
-              <button key={c.id} className="tap" onClick={() => navigate('detail', { card: c })} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4, width: '100%', minWidth: 0 }}>
+              <button key={c.id} className="tap" onClick={() => selectMode ? toggleSelect(c.id) : navigate('detail', { card: c })} style={{
+                textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4, width: '100%', minWidth: 0,
+                outline: isSelected ? '2px solid var(--accent)' : 'none', borderRadius: 10,
+              }}>
                 <div style={{ position: 'relative', width: '100%' }}>
                   <CardArt card={c} renderMode={tweaks.cardRender} size="md" fill/>
-                  {c.bulk && <div style={{
+                  {selectMode && (
+                    <div style={{
+                      position: 'absolute', top: 4, left: 4,
+                      width: 20, height: 20, borderRadius: 10,
+                      background: isSelected ? 'var(--accent)' : 'oklch(0 0 0 / 0.5)',
+                      border: '2px solid',
+                      borderColor: isSelected ? 'var(--accent)' : 'oklch(1 0 0 / 0.6)',
+                      display: 'grid', placeItems: 'center',
+                      color: '#fff', fontSize: 12, fontWeight: 700,
+                    }}>{isSelected ? '✓' : ''}</div>
+                  )}
+                  {!selectMode && c.bulk && <div style={{
                     position: 'absolute', top: 4, right: 4,
                     background: 'oklch(0 0 0 / 0.7)', backdropFilter: 'blur(4px)',
                     color: 'oklch(1 0 0 / 0.85)', fontSize: 8, fontWeight: 700,
                     letterSpacing: '0.05em', padding: '2px 5px', borderRadius: 4,
                   }}>BULK</div>}
-                  {dupeCount > 1 && !c.bulk && (
+                  {!selectMode && dupeCount > 1 && !c.bulk && (
                     <div style={{
                       position: 'absolute', top: 4, right: 4,
                       background: 'oklch(0 0 0 / 0.72)', backdropFilter: 'blur(4px)',
@@ -380,13 +431,25 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
 
         {view === 'list' && items.length > 0 && (
           <div className="col" style={{ padding: '0 16px' }}>
-            {items.map((c, i) => (
+            {items.map((c, i) => {
+              const isSelected = selectedIds.has(c.id);
+              return (
               <div key={c.id} style={{
-                display: 'grid', gridTemplateColumns: '50px 1fr auto auto', gap: 12, alignItems: 'center',
+                display: 'grid', gridTemplateColumns: selectMode ? '24px 50px 1fr' : '50px 1fr auto auto', gap: 12, alignItems: 'center',
                 padding: '12px 0', textAlign: 'left',
                 borderTop: i === 0 ? 'none' : '1px solid var(--hairline-soft)',
+                background: isSelected ? 'var(--accent-soft)' : 'transparent', borderRadius: 8,
               }}>
-                <button className="tap" onClick={() => navigate('detail', { card: c })} style={{ display: 'contents' }}>
+                {selectMode && (
+                  <button className="tap" onClick={() => toggleSelect(c.id)} style={{
+                    width: 22, height: 22, borderRadius: 11, flexShrink: 0,
+                    border: '2px solid', display: 'grid', placeItems: 'center',
+                    borderColor: isSelected ? 'var(--accent)' : 'var(--hairline)',
+                    background: isSelected ? 'var(--accent)' : 'transparent',
+                    color: '#fff', fontSize: 12, fontWeight: 700,
+                  }}>{isSelected ? '✓' : ''}</button>
+                )}
+                <button className="tap" onClick={() => selectMode ? toggleSelect(c.id) : navigate('detail', { card: c })} style={{ display: 'contents' }}>
                   <CardArt card={c} renderMode={tweaks.cardRender} size="sm" flat/>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
@@ -399,16 +462,18 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
                       </div>
                     )}
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
-                    {c.change != null && (
-                      <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
-                        {c.change >= 0 ? '+' : ''}{(c.change).toFixed(1)}%
-                      </div>
-                    )}
-                  </div>
+                  {!selectMode && (
+                    <div style={{ textAlign: 'right' }}>
+                      <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
+                      {c.change != null && (
+                        <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
+                          {c.change >= 0 ? '+' : ''}{(c.change).toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </button>
-                {removeCard && (
+                {!selectMode && removeCard && (
                   <button
                     className="tap"
                     onClick={() => {
@@ -430,7 +495,8 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
                   </button>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
@@ -494,6 +560,36 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
           </div>
         )}
       </div>
+
+      {/* Bulk action bar — floats above nav bar when in select mode */}
+      {selectMode && (
+        <div style={{
+          position: 'absolute', bottom: 0, left: 0, right: 0,
+          background: 'var(--bg)', borderTop: '1px solid var(--hairline-soft)',
+          padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center',
+          boxShadow: '0 -8px 24px oklch(0 0 0 / 0.15)',
+        }}>
+          <button className="tap" onClick={() => {
+            if (selectedIds.size === items.length) exitSelectMode();
+            else setSelectedIds(new Set(items.map(c => c.id)));
+          }} style={{
+            flex: 1, height: 44, borderRadius: 12,
+            background: 'var(--bg-2)', color: 'var(--ink-2)',
+            fontSize: 13, fontWeight: 600,
+          }}>
+            {selectedIds.size === items.length ? 'Deselect all' : `Select all (${items.length})`}
+          </button>
+          <button className="tap" onClick={handleBulkDelete} disabled={selectedIds.size === 0 || bulkDeleting} style={{
+            flex: 1.2, height: 44, borderRadius: 12,
+            background: selectedIds.size > 0 ? 'oklch(0.40 0.15 30)' : 'var(--bg-2)',
+            color: selectedIds.size > 0 ? '#fff' : 'var(--ink-3)',
+            fontSize: 13, fontWeight: 700,
+            opacity: bulkDeleting ? 0.6 : 1,
+          }}>
+            {bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size > 0 ? `${selectedIds.size} card${selectedIds.size > 1 ? 's' : ''}` : ''}`}
+          </button>
+        </div>
+      )}
 
       {completionSheet && (
         <SetCompletionSheet

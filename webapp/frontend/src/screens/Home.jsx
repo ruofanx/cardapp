@@ -359,6 +359,23 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
               Cards {fmtUSD(cardsUSD, { decimals: 0 })} · Sealed {fmtUSD(sealedUSD, { decimals: 0 })}
             </div>
           )}
+          {(() => {
+            const withCost = ownedCards.filter(c => c.purchase_price != null && c.usd != null);
+            if (!withCost.length || valueHidden) return null;
+            const totalCost = withCost.reduce((s, c) => s + c.purchase_price, 0);
+            const totalNow  = withCost.reduce((s, c) => s + c.usd, 0);
+            const gain = totalNow - totalCost;
+            const gainPct = totalCost > 0 ? (gain / totalCost) * 100 : 0;
+            return (
+              <div style={{ fontSize: 13, color: gain >= 0 ? 'var(--pos)' : 'var(--neg)', marginTop: 2 }}>
+                <span className="mono">{gain >= 0 ? '+' : ''}{fmtUSD(gain, { decimals: 0 })}</span>
+                {' '}
+                <span className="mono">({gainPct >= 0 ? '+' : ''}{gainPct.toFixed(1)}%)</span>
+                {' '}
+                <span style={{ color: 'var(--ink-3)' }}>total gain · {withCost.length} tracked</span>
+              </div>
+            );
+          })()}
           <div className="row gap-3" style={{ marginTop: 4, fontSize: 13 }}>
             <span className={changeRange >= 0 ? 'delta-pos' : 'delta-neg'}>
               <span className="mono">{changeRange >= 0 ? '+' : ''}{fmtUSD(changeRange, { decimals: 0 })}</span>

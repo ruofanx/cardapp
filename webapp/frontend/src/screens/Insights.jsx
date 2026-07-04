@@ -95,6 +95,59 @@ export default function InsightsScreen({ goBack, collection = [], tweaks }) {
           </div>
         </Section>
 
+        {/* Top gainers / losers */}
+        {stats.topGainers.length > 0 && (
+          <Section title="Best investments">
+            <div style={{ padding: '0 16px' }}>
+              {stats.topGainers.map((c, i) => (
+                <div key={c.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--hairline-soft)',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                      Paid {fmtPrice(c.purchase_price, cur === 'BOTH' ? 'USD' : cur)} · Now {fmtPrice(c.usd, cur === 'BOTH' ? 'USD' : cur)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--pos)' }}>
+                      +{fmtPrice(c.gainUSD, cur === 'BOTH' ? 'USD' : cur)}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--pos)' }}>+{c.gainPct.toFixed(0)}%</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {stats.topLosers.length > 0 && (
+          <Section title="Biggest losses">
+            <div style={{ padding: '0 16px' }}>
+              {stats.topLosers.map((c, i) => (
+                <div key={c.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--hairline-soft)',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                      Paid {fmtPrice(c.purchase_price, cur === 'BOTH' ? 'USD' : cur)} · Now {fmtPrice(c.usd, cur === 'BOTH' ? 'USD' : cur)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--neg)' }}>
+                      {fmtPrice(c.gainUSD, cur === 'BOTH' ? 'USD' : cur)}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--neg)' }}>{c.gainPct.toFixed(0)}%</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+
         {/* Acquisition timeline */}
         {stats.monthBuckets.length > 1 && (
           <Section title="Cards added by month">
@@ -158,8 +211,16 @@ function compute(cards) {
   const rawValue = rawCards.reduce((s, c) => s + (c.usd || 0), 0)
   const gradedValue = gradedCards.reduce((s, c) => s + (c.usd || 0), 0)
 
-  // Top 5
+  // Top 5 by value
   const top5 = [...cards].filter(c => c.usd > 0).sort((a, b) => (b.usd || 0) - (a.usd || 0)).slice(0, 5)
+
+  // Top gainers (cards with purchase_price set and highest % gain)
+  const gainers = [...withPaid]
+    .filter(c => c.usd != null && c.purchase_price > 0)
+    .map(c => ({ ...c, gainPct: (c.usd - c.purchase_price) / c.purchase_price * 100, gainUSD: c.usd - c.purchase_price }))
+    .sort((a, b) => b.gainPct - a.gainPct)
+  const topGainers = gainers.filter(c => c.gainPct > 0).slice(0, 5)
+  const topLosers  = [...gainers].filter(c => c.gainPct < 0).sort((a, b) => a.gainPct - b.gainPct).slice(0, 3)
 
   // Acquisition by month
   const monthMap = {}
@@ -179,7 +240,7 @@ function compute(cards) {
     conditions,
     hasJP, enCount: enCards.length, jpCount: jpCards.length, enValue, jpValue,
     rawCount: rawCards.length, gradedCount: gradedCards.length, rawValue, gradedValue,
-    top5,
+    top5, topGainers, topLosers,
     monthBuckets,
   }
 }

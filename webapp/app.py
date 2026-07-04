@@ -318,8 +318,8 @@ def export_collection(profile: dict = Depends(get_current_profile)):
     writer.writerow([
         "Name", "Set", "Number", "Language", "Condition",
         "Graded", "Grader", "Grade",
-        "Current Price (USD)", "Purchase Price (USD)", "Gain/Loss (%)",
-        "Tags", "Image URL", "Added",
+        "Current Price (USD)", "Purchase Price (USD)", "Purchase Date", "Gain/Loss (%)",
+        "Notes", "Tags", "Image URL", "Added",
     ])
     for c in cards:
         tags = ", ".join(t if isinstance(t, str) else (t.get("name") or "") for t in (c.tags or []))
@@ -337,7 +337,9 @@ def export_collection(profile: dict = Depends(get_current_profile)):
             c.grade or "",
             f"{c.current_market_price:.2f}" if c.current_market_price else "",
             f"{c.purchase_price:.2f}" if c.purchase_price else "",
+            c.purchase_date or "",
             gain_loss,
+            c.notes or "",
             tags,
             c.image_url or "",
             c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
