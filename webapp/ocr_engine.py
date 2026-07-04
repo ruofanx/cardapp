@@ -582,13 +582,20 @@ def should_skip_ocr_for_variant(variant):
 def extract_card_number_via_ocr(image_path):
     if pytesseract is None or Image is None:
         return None
+    # Probe for the tesseract binary before attempting — avoids a noisy
+    # TesseractNotFoundError log on environments where pytesseract is installed
+    # but the system tesseract binary is absent (e.g. Railway containers).
+    try:
+        pytesseract.get_tesseract_version()
+    except Exception:
+        return None
     try:
         with Image.open(image_path) as im:
             w, h = im.size
             crop = im.crop((0, int(h * 0.85), int(w * 0.45), h))
             text = pytesseract.image_to_string(crop, config="--psm 7")
     except Exception as e:
-        log.warning("OCR failed: %s", e)
+        log.debug("tesseract OCR skipped: %s", e)
         return None
     m = CARD_NUMBER_RE.search(text)
     if not m:
