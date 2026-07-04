@@ -39,7 +39,7 @@ function GradingBadge({ grader, grade }) {
 
 // Backend returns tags as objects like {id, name, color, ...}; older mock data
 // has plain strings. Normalize to a name list per card.
-function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend, params }) {
+function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCard, backend, params }) {
   const cur = tweaks.currency;
   const [view, setView] = useState('grid');
   const [sort, setSort] = useState('value');
@@ -51,6 +51,10 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
   // Set semantics — multi-select with AND filter (card must have ALL selected).
   const [selectedTags, setSelectedTags] = useState(() => new Set());
   const [setLogos, setSetLogos] = useState(null); // null = not yet fetched
+  const [setTotals, setSetTotals] = useState({});
+  const [setIds, setSetIds] = useState({});       // normName -> TCGdex set id
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [completionSheet, setCompletionSheet] = useState(null); // { setName, setId, owned }
 
   useEffect(() => {
     if (view !== 'set' || setLogos !== null) return;
@@ -58,12 +62,21 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
       fetch('https://api.tcgdex.net/v2/en/sets').then(r => r.json()).catch(() => []),
       fetch('https://api.tcgdex.net/v2/ja/sets').then(r => r.json()).catch(() => []),
     ]).then(([en, ja]) => {
-      const map = {};
+      const logos = {};
+      const totals = {};
+      const ids = {};
       const norm = n => n.toLowerCase().replace(/[^a-z0-9]/g, '');
       [...(en || []), ...(ja || [])].forEach(s => {
-        if (s.logo && s.name) map[norm(s.name)] = s.logo + '.png';
+        if (!s.name) return;
+        const key = norm(s.name);
+        if (s.logo) logos[key] = s.logo + '.png';
+        if (s.id) ids[key] = s.id;
+        if (s.cardCount?.total) totals[key] = s.cardCount.total;
+        else if (s.cardCount?.official) totals[key] = s.cardCount.official;
       });
-      setSetLogos(map);
+      setSetLogos(logos);
+      setSetTotals(totals);
+      setSetIds(ids);
     });
   }, [view, setLogos]);
 
@@ -95,6 +108,17 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
     });
   };
   const clearTags = () => setSelectedTags(new Set());
+
+  // Count how many cards in the WHOLE collection share the same name+set+code.
+  // Used to show a "x2" badge when the user owns multiples.
+  const copyCount = useMemo(() => {
+    const counts = {};
+    (collection || []).forEach(c => {
+      const key = `${(c.name || '').toLowerCase()}|${c.set || ''}|${c.code || ''}`;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }, [collection]);
 
   const items = useMemo(() => {
     let list = (collection || []).filter(c => c && c.name);
@@ -299,7 +323,10 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
         )}
         {view === 'grid' && items.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, padding: '8px 12px' }}>
-            {items.map(c => (
+            {items.map(c => {
+              const dupeKey = `${(c.name || '').toLowerCase()}|${c.set || ''}|${c.code || ''}`;
+              const dupeCount = copyCount[dupeKey] || 1;
+              return (
               <button key={c.id} className="tap" onClick={() => navigate('detail', { card: c })} style={{ textAlign: 'left', display: 'flex', flexDirection: 'column', gap: 4, width: '100%', minWidth: 0 }}>
                 <div style={{ position: 'relative', width: '100%' }}>
                   <CardArt card={c} renderMode={tweaks.cardRender} size="md" fill/>
@@ -309,6 +336,14 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                     color: 'oklch(1 0 0 / 0.85)', fontSize: 8, fontWeight: 700,
                     letterSpacing: '0.05em', padding: '2px 5px', borderRadius: 4,
                   }}>BULK</div>}
+                  {dupeCount > 1 && !c.bulk && (
+                    <div style={{
+                      position: 'absolute', top: 4, right: 4,
+                      background: 'oklch(0 0 0 / 0.72)', backdropFilter: 'blur(4px)',
+                      color: '#fff', fontSize: 9, fontWeight: 700,
+                      padding: '2px 5px', borderRadius: 4,
+                    }}>×{dupeCount}</div>
+                  )}
                   {(c.lang === 'JP' || c.lang === 'CH') && (
                     <div style={{
                       position: 'absolute', top: 4, left: 4,
@@ -338,37 +373,63 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                 )}
                 <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
 
         {view === 'list' && items.length > 0 && (
           <div className="col" style={{ padding: '0 16px' }}>
             {items.map((c, i) => (
-              <button key={c.id} className="tap" onClick={() => navigate('detail', { card: c })} style={{
-                display: 'grid', gridTemplateColumns: '50px 1fr auto', gap: 12, alignItems: 'center',
+              <div key={c.id} style={{
+                display: 'grid', gridTemplateColumns: '50px 1fr auto auto', gap: 12, alignItems: 'center',
                 padding: '12px 0', textAlign: 'left',
                 borderTop: i === 0 ? 'none' : '1px solid var(--hairline-soft)',
               }}>
-                <CardArt card={c} renderMode={tweaks.cardRender} size="sm" flat/>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
-                    {c.code} · {c.set} · {c.lang} · {c.condition}
-                  </div>
-                  {c.is_graded && c.grader && c.grade != null && (
-                    <div style={{ marginTop: 3 }}>
-                      <GradingBadge grader={c.grader} grade={c.grade} />
+                <button className="tap" onClick={() => navigate('detail', { card: c })} style={{ display: 'contents' }}>
+                  <CardArt card={c} renderMode={tweaks.cardRender} size="sm" flat/>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                      {c.code} · {c.set} · {c.lang} · {c.condition}
                     </div>
-                  )}
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
-                  <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
-                    {c.change >= 0 ? '+' : ''}{(c.change).toFixed(1)}%
+                    {c.is_graded && c.grader && c.grade != null && (
+                      <div style={{ marginTop: 3 }}>
+                        <GradingBadge grader={c.grader} grade={c.grade} />
+                      </div>
+                    )}
                   </div>
-                </div>
-              </button>
+                  <div style={{ textAlign: 'right' }}>
+                    <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
+                    {c.change != null && (
+                      <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
+                        {c.change >= 0 ? '+' : ''}{(c.change).toFixed(1)}%
+                      </div>
+                    )}
+                  </div>
+                </button>
+                {removeCard && (
+                  <button
+                    className="tap"
+                    onClick={() => {
+                      if (confirmDeleteId === c.id) {
+                        removeCard(c.id);
+                        setConfirmDeleteId(null);
+                      } else {
+                        setConfirmDeleteId(c.id);
+                        setTimeout(() => setConfirmDeleteId(id => id === c.id ? null : id), 2500);
+                      }
+                    }}
+                    style={{
+                      padding: '6px 8px', borderRadius: 8, flexShrink: 0,
+                      background: confirmDeleteId === c.id ? 'oklch(0.35 0.12 30 / 0.15)' : 'transparent',
+                      color: confirmDeleteId === c.id ? 'var(--neg)' : 'var(--ink-3)',
+                      fontSize: 11, fontWeight: 700,
+                    }}>
+                    {confirmDeleteId === c.id ? 'Del?' : <Icon name="trash" size={14}/>}
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -388,8 +449,18 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
               });
               return Array.from(map.values()).sort((a, b) => b.value - a.value).map(s => {
                 const logo = setLogos ? setLogos[normName(s.name)] : null;
+                const total = setTotals[normName(s.name)] || null;
+                const pct = total ? Math.round((s.owned / total) * 100) : null;
+                const setId = setIds[normName(s.name)] || null;
+                const ownedCards = items.filter(c => c.set === s.name);
                 return (
-                  <button key={s.name} className="tap row" onClick={() => { setQuery(s.name); setView('grid'); }} style={{
+                  <button key={s.name} className="tap row" onClick={() => {
+                    if (setId) {
+                      setCompletionSheet({ setName: s.name, setId, ownedCards, logo, pct, total });
+                    } else {
+                      setQuery(s.name); setView('grid');
+                    }
+                  }} style={{
                     padding: '12px 14px', background: 'var(--bg-1)', borderRadius: 14,
                     border: '1px solid var(--hairline-soft)', textAlign: 'left', gap: 12,
                     alignItems: 'center',
@@ -402,7 +473,15 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 500 }}>{s.name}</div>
-                      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{s.owned} card{s.owned === 1 ? '' : 's'}</div>
+                      <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                        {total ? `${s.owned}/${total}` : `${s.owned} card${s.owned === 1 ? '' : 's'}`}
+                        {pct != null && ` · ${pct}%`}
+                      </div>
+                      {total != null && (
+                        <div style={{ marginTop: 5, height: 3, borderRadius: 2, background: 'var(--hairline)', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, borderRadius: 2, background: pct >= 100 ? 'var(--pos)' : 'var(--accent)' }}/>
+                        </div>
+                      )}
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
                       <Price usd={s.value} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
@@ -415,6 +494,31 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, backend,
           </div>
         )}
       </div>
+
+      {completionSheet && (
+        <SetCompletionSheet
+          {...completionSheet}
+          onClose={() => setCompletionSheet(null)}
+          onBrowse={() => { setQuery(completionSheet.setName); setView('grid'); setCompletionSheet(null); }}
+          navigate={navigate}
+          tweaks={tweaks}
+          addToWantList={async (card) => {
+            try {
+              await api.addCard({
+                name: card.name,
+                set: completionSheet.setName,
+                code: card.localId,
+                lang: 'EN',
+                image_url: card.image ? card.image + '/high.png' : null,
+                tags: ['wishlist'],
+                condition: 'NM',
+              });
+            } catch (e) {
+              console.error('addToWantList', e);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -427,6 +531,136 @@ function Stat({ label, value, mono, accent }) {
     }}>
       <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{label}</div>
       <div className={mono ? 'mono' : ''} style={{ fontSize: 16, fontWeight: 600, marginTop: 2, color: accent ? 'var(--accent)' : 'var(--ink)' }}>{value}</div>
+    </div>
+  );
+}
+
+function SetCompletionSheet({ setName, setId, ownedCards, logo, pct, total, onClose, onBrowse, navigate, tweaks, addToWantList }) {
+  const [cards, setCards] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [addedIds, setAddedIds] = useState(new Set());
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`https://api.tcgdex.net/v2/en/sets/${setId}`)
+      .then(r => r.json())
+      .then(data => { setCards(data.cards || []); setLoading(false); })
+      .catch(() => { setCards(null); setLoading(false); });
+  }, [setId]);
+
+  // Normalize code: "4/102" -> "4", "4" -> "4"
+  const normCode = s => s ? String(s).split('/')[0].trim() : '';
+  const ownedLocalIds = new Set(ownedCards.map(c => normCode(c.code)));
+
+  async function handleAddWant(card) {
+    setAddedIds(prev => new Set([...prev, card.localId]));
+    await addToWantList(card);
+  }
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 10,
+      background: 'oklch(0 0 0 / 0.55)', backdropFilter: 'blur(2px)',
+      display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+    }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--bg)', borderRadius: '20px 20px 0 0',
+        maxHeight: '88dvh', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 -4px 32px oklch(0 0 0 / 0.3)',
+      }}>
+        {/* Handle */}
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: 'var(--hairline)' }}/>
+        </div>
+
+        {/* Header */}
+        <div style={{ padding: '8px 16px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {logo && <img src={logo} alt={setName} style={{ height: 32, objectFit: 'contain' }}/>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{setName}</div>
+            {total != null && (
+              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
+                {ownedCards.length}/{total} owned · {pct}%
+              </div>
+            )}
+          </div>
+          <button className="tap" onClick={onBrowse} style={{
+            fontSize: 12, fontWeight: 600, color: 'var(--accent)',
+            padding: '6px 10px', borderRadius: 8, background: 'var(--accent-soft)',
+          }}>View owned</button>
+        </div>
+
+        {/* Progress bar */}
+        {total != null && (
+          <div style={{ height: 4, background: 'var(--hairline)', margin: '0 16px 12px' }}>
+            <div style={{ height: '100%', width: `${Math.min(pct, 100)}%`, background: pct >= 100 ? 'var(--pos)' : 'var(--accent)', borderRadius: 2, transition: 'width 0.4s' }}/>
+          </div>
+        )}
+
+        {/* Card list */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 24px' }}>
+          {loading && (
+            <div style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 32, fontSize: 13 }}>Loading set…</div>
+          )}
+          {!loading && !cards && (
+            <div style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 32, fontSize: 13 }}>
+              Set data unavailable.{' '}
+              <button className="tap" onClick={onBrowse} style={{ color: 'var(--accent)', fontWeight: 600 }}>Browse owned</button>
+            </div>
+          )}
+          {!loading && cards && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6 }}>
+              {cards.map(card => {
+                const owned = ownedLocalIds.has(normCode(card.localId));
+                const added = addedIds.has(card.localId);
+                return (
+                  <div key={card.localId} style={{ position: 'relative' }}>
+                    <div style={{ opacity: owned ? 1 : 0.38, transition: 'opacity 0.2s' }}>
+                      {card.image
+                        ? <img src={card.image + '/high.png'} alt={card.name}
+                            style={{ width: '100%', borderRadius: 6, display: 'block' }}
+                            onError={e => { e.target.style.display='none'; }}/>
+                        : <div style={{ width: '100%', paddingBottom: '140%', background: 'var(--bg-2)', borderRadius: 6 }}/>
+                      }
+                    </div>
+                    <div style={{ fontSize: 9, color: 'var(--ink-3)', textAlign: 'center', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {card.localId} {card.name}
+                    </div>
+                    {owned && (
+                      <div style={{
+                        position: 'absolute', top: 3, right: 3, width: 16, height: 16, borderRadius: 8,
+                        background: 'var(--pos)', color: '#fff', fontSize: 10, fontWeight: 700,
+                        display: 'grid', placeItems: 'center', boxShadow: '0 1px 4px oklch(0 0 0 / 0.3)',
+                      }}>✓</div>
+                    )}
+                    {!owned && !added && (
+                      <button className="tap" onClick={() => handleAddWant(card)} style={{
+                        position: 'absolute', inset: 0, borderRadius: 6, background: 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <div style={{
+                          background: 'oklch(0 0 0 / 0.6)', backdropFilter: 'blur(4px)',
+                          color: '#fff', fontSize: 9, fontWeight: 700, borderRadius: 4,
+                          padding: '3px 6px', display: 'flex', alignItems: 'center', gap: 3,
+                        }}>
+                          <Icon name="star" size={9}/> Want
+                        </div>
+                      </button>
+                    )}
+                    {added && !owned && (
+                      <div style={{
+                        position: 'absolute', top: 3, right: 3, width: 16, height: 16, borderRadius: 8,
+                        background: 'var(--accent)', color: 'var(--accent-ink)', fontSize: 10, fontWeight: 700,
+                        display: 'grid', placeItems: 'center', boxShadow: '0 1px 4px oklch(0 0 0 / 0.3)',
+                      }}>★</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

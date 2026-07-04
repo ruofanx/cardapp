@@ -484,6 +484,16 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   };
 
   const [addPurchasePrice, setAddPurchasePrice] = useState('');
+  const [addingCopy, setAddingCopy] = useState(false);
+  const handleAddCopy = async () => {
+    if (!addToCollection || addingCopy) return;
+    setAddingCopy(true);
+    try {
+      await addToCollection({ ...c, condition, lang });
+    } catch {} finally {
+      setAddingCopy(false);
+    }
+  };
 
   const handleAdd = async () => {
     if (!addToCollection || adding) return;
@@ -1198,6 +1208,16 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
             }}>
               <Icon name="trade" size={18} stroke={2}/> Trade
             </button>
+            {addToCollection && (
+              <button className="tap" onClick={handleAddCopy} disabled={addingCopy} style={{
+                width: 48, height: 48, borderRadius: 14, flexShrink: 0,
+                background: 'var(--bg-2)', color: addingCopy ? 'var(--ink-3)' : 'var(--ink)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: 700,
+              }} title="Add another copy">
+                {addingCopy ? '…' : <><Icon name="plus" size={16}/>×2</>}
+              </button>
+            )}
             <button className="tap" onClick={openEdit} style={{
               flex: 2, height: 48, borderRadius: 14,
               background: 'var(--accent)', color: 'var(--accent-ink)',

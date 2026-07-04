@@ -121,7 +121,9 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   const moversList = [...ownedCards].filter(c => c.change != null && c.change !== 0).sort((a, b) => (b.change || 0) - (a.change || 0));
   const movers = moversList.slice(0, 3);
   const losers = moversList.filter(c => c.change < 0).slice(-2).reverse();
-  const recentScans = ownedCards.slice(0, 4);
+  const recentScans = [...ownedCards]
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    .slice(0, 6);
   const watchlist = ownedCards.filter(c => (c.usd || 0) > 5).slice(0, 3);
 
   // Per-card price history for Watchlist sparklines — fetched for the top 3 watchlist cards.

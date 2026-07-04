@@ -271,7 +271,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
     if (fileInputRef.current) fileInputRef.current.click();
   };
 
-  // Generic bottom toast — { icon, text }. Used for both the wishlist path
+  // Generic bottom toast — { icon, text, onAddMore }. Used for both the wishlist path
   // and the direct "Add to Collection" path below.
   const [toast, setToast] = useState(null);
 
@@ -314,8 +314,11 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
       : card;
     try {
       await addToCollection(cardWithPhoto);
-      setToast({ icon: 'check', text: `Added "${card.name}" to collection` });
-      setTimeout(() => setToast(null), 2200);
+      const addMore = async () => {
+        try { await addToCollection(cardWithPhoto); } catch {}
+      };
+      setToast({ icon: 'check', text: `Added "${card.name}"`, onAddMore: addMore });
+      setTimeout(() => setToast(null), 3000);
       setPhase('idle');
       setPipelineLog([]);
       setCandidates([]);
@@ -604,6 +607,13 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
         }}>
           <Icon name={toast.icon} size={16} style={{ color: toast.icon === 'info' ? 'var(--neg)' : 'var(--accent)' }}/>
           <span style={{ flex: 1 }}>{toast.text}</span>
+          {toast.onAddMore && (
+            <button className="tap" onClick={toast.onAddMore} style={{
+              flexShrink: 0, padding: '4px 10px', borderRadius: 8,
+              background: 'oklch(1 0 0 / 0.12)', color: 'var(--accent)',
+              fontSize: 12, fontWeight: 700,
+            }}>+1</button>
+          )}
         </div>
       )}
     </div>
