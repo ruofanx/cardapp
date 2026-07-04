@@ -120,7 +120,7 @@ export default function WantListScreen({ navigate, goBack, collection = [], upda
                   background: 'var(--bg-1)', borderTop: i > 0 ? '1px solid var(--hairline-soft)' : 'none',
                   textAlign: 'left',
                 }}>
-                  <CardArt card={c} size={32} style={{ borderRadius: 4, flexShrink: 0 }} />
+                  <CardArt card={c} size="xs" flat />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
                     <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{c.set} · {c.lang || 'EN'}</div>
@@ -195,7 +195,7 @@ function WantRow({ card, first, onRemove, onDetail }) {
       borderTop: first ? 'none' : '1px solid var(--hairline-soft)',
     }}>
       <button className="tap" onClick={onDetail} style={{ display: 'contents' }}>
-        <CardArt card={card} size={44} style={{ borderRadius: 6, flexShrink: 0 }} />
+        <CardArt card={card} size="xs" flat />
         <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
           <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{card.name}</div>
           <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 1 }}>

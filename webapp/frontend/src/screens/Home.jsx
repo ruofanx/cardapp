@@ -12,7 +12,7 @@ const RANGE_META = {
   'ALL': { days: 1095, label: 'all time' },
 };
 
-function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, backend }) {
+function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, backend, authed }) {
   const cur = tweaks.currency;
   const [valueHidden, setValueHidden] = useState(false);
   const [alerts, setAlerts] = useState([]);
@@ -70,7 +70,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   const [allHistory, setAllHistory] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   useEffect(() => {
-    if (!currentUser?.id || backend?.online === false) return;
+    if (!authed || !currentUser?.id || backend?.online === false) return;
     setHistoryLoading(true);
     const base = api.state?.base || 'http://localhost:8000';
     const token = api.state?.token;
@@ -80,7 +80,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
       .then(data => { if (data?.points) setAllHistory(data.points); })
       .catch(() => {})
       .finally(() => setHistoryLoading(false));
-  }, [currentUser?.id, backend?.online]);
+  }, [authed, currentUser?.id, backend?.online]);
 
   // Filter all history to the selected range and extract values for Sparkline.
   const meta = RANGE_META[range] || RANGE_META['1M'];
@@ -587,9 +587,9 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
           );
         })()}
 
-        {/* Insights link */}
-        {ownedCards.length > 0 && (
-          <div style={{ padding: '16px 16px 0' }}>
+        {/* Quick links */}
+        <div style={{ padding: '16px 16px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {ownedCards.length > 0 && (
             <button className="tap" onClick={() => navigate('insights')} style={{
               width: '100%', padding: '14px 16px', borderRadius: 14,
               background: 'var(--bg-1)', border: '1px solid var(--hairline-soft)',
@@ -602,8 +602,36 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
               </div>
               <Icon name="chevron-right" size={18} />
             </button>
-          </div>
-        )}
+          )}
+          {(() => {
+            const wantCount = cards.filter(c => (c.tags || []).some(t => (typeof t === 'string' ? t : t?.name || '').toLowerCase() === 'wishlist')).length;
+            return (
+              <button className="tap" onClick={() => navigate('want-list')} style={{
+                width: '100%', padding: '14px 16px', borderRadius: 14,
+                background: 'var(--bg-1)', border: '1px solid var(--hairline-soft)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                textAlign: 'left',
+              }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Want List</div>
+                  <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>
+                    {wantCount > 0 ? `${wantCount} card${wantCount !== 1 ? 's' : ''} you're looking for` : 'Cards you want to find'}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {wantCount > 0 && (
+                    <div style={{
+                      minWidth: 20, height: 20, borderRadius: 10, padding: '0 6px',
+                      background: 'var(--accent)', color: 'var(--accent-ink)',
+                      fontSize: 11, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>{wantCount}</div>
+                  )}
+                  <Icon name="chevron-right" size={18} />
+                </div>
+              </button>
+            );
+          })()}
+        </div>
       </div>
     </div>
   );

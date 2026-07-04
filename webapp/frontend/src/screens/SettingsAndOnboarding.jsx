@@ -12,6 +12,12 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
   const [health, setHealth] = useState(null);
   const [tradeMode, setTradeMode] = useState(currentUser?.trade_mode ?? false);
   const [tradeModeLoading, setTradeModeLoading] = useState(false);
+  const [account, setAccount] = useState(null);
+
+  useEffect(() => {
+    if (backend?.online === false || !api.getAccount) return;
+    api.getAccount().then(a => setAccount(a)).catch(() => {});
+  }, [backend?.online]);
 
   useEffect(() => {
     if (backend?.online === false || !api.getHealth) return;
@@ -59,6 +65,64 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
             <Icon name="chevron-right" size={18} style={{ color: 'var(--ink-3)' }}/>
           </div>
         </div>
+
+        {/* Plan card */}
+        {account && (
+          <div style={{ padding: '0 16px 16px' }}>
+            {(() => {
+              const isPro = account.is_pro;
+              const trialEnd = account.trial_ends_at ? new Date(account.trial_ends_at) : null;
+              const inTrial = trialEnd && trialEnd > new Date();
+              const daysLeft = inTrial ? Math.ceil((trialEnd - new Date()) / 86400000) : 0;
+              const scanUsed = account.scan_used ?? 0;
+              const scanLimit = account.scan_limit;
+              const scanPct = scanLimit ? Math.min(1, scanUsed / scanLimit) : 0;
+              const scanFull = scanLimit && scanUsed >= scanLimit;
+
+              return (
+                <div style={{
+                  padding: 14, borderRadius: 14, border: '1px solid var(--hairline-soft)',
+                  background: isPro ? 'oklch(0.22 0.06 260)' : 'var(--bg-1)',
+                }}>
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: isPro ? 'oklch(0.75 0.12 260)' : 'var(--ink)' }}>
+                        {isPro ? (inTrial ? `Pro Trial` : 'Pro') : 'Free'}
+                      </div>
+                      {inTrial && (
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>{daysLeft} day{daysLeft !== 1 ? 's' : ''} left in trial</div>
+                      )}
+                    </div>
+                    {!isPro && (
+                      <div style={{
+                        padding: '5px 12px', borderRadius: 999,
+                        background: 'var(--accent)', color: 'var(--accent-ink)',
+                        fontSize: 11, fontWeight: 700,
+                      }}>Upgrade</div>
+                    )}
+                  </div>
+                  {scanLimit != null && (
+                    <div>
+                      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 4 }}>
+                        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Scans this month</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: scanFull ? 'var(--neg)' : 'var(--ink-2)' }}>
+                          {scanUsed} / {scanLimit}
+                        </div>
+                      </div>
+                      <div style={{ height: 4, borderRadius: 2, background: 'var(--bg-3)', overflow: 'hidden' }}>
+                        <div style={{
+                          height: '100%', borderRadius: 2, transition: 'width 0.4s',
+                          width: `${scanPct * 100}%`,
+                          background: scanFull ? 'var(--neg)' : scanPct > 0.8 ? 'oklch(0.65 0.15 55)' : 'var(--accent)',
+                        }}/>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
 
         {/* Profile switcher */}
         <div style={{ padding: '0 16px 16px' }}>

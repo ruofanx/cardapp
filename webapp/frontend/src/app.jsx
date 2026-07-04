@@ -255,6 +255,7 @@ export default function App() {
     identifyCard,
     reloadCollection: (uid) => reloadCollection(uid ?? currentUser?.id),
     users, currentUser, setCurrentUser,
+    authed,
     backend,
     params: top.params,
     onSignOut: handleSignOut,
