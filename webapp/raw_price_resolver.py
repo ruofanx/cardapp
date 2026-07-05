@@ -63,6 +63,7 @@ async def _baseline_price(
         primary_looks_wrong = (
             br is None
             or (is_sir_range and br["median_usd"] < 50)
+            or (br is not None and br["sample_size"] < 3)
         )
         if primary_looks_wrong:
             try:

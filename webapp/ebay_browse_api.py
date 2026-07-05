@@ -260,11 +260,16 @@ async def median_relevant_price(
     # number (if provided). eBay's relevance ranking sometimes surfaces
     # other cards from the same set when the query is sparse.
     name_tokens = [t.lower() for t in name.split() if len(t) >= 3]
+    # Cards stored with Japanese/Chinese names (non-ASCII) won't appear in
+    # English eBay titles, which use transliterations ("Pikachu" not "ピカチュウ").
+    # Skip the name-token requirement for these — card number + "Japanese"
+    # in the query already narrows results sufficiently.
+    name_is_non_ascii = any(ord(c) > 127 for c in name)
     num_str = (str(card_number).split("/")[0].strip() if card_number else "")
     relevant = []
     for it in items:
         t = it.title.lower()
-        if name_tokens and not any(tk in t for tk in name_tokens):
+        if name_tokens and not name_is_non_ascii and not any(tk in t for tk in name_tokens):
             continue
         if num_str and num_str not in t:
             continue
@@ -291,7 +296,7 @@ async def median_relevant_price(
             continue
         relevant.append(it)
 
-    if len(relevant) < 2:
+    if len(relevant) < 3:
         return None
 
     prices = sorted(it.price_usd for it in relevant)
