@@ -675,6 +675,13 @@ async def search_cards(query: str, limit: int = 20,
     if len(raw) < 2:
         return []
 
+    # Normalise bracket/hash notation users copy from PriceCharting or type naturally:
+    #   "Umbreon [Master Ball] #59"  →  "Umbreon Master Ball 59"
+    # Removes [brackets] (keep inner content) and strips leading # from numbers.
+    raw = re.sub(r'\[([^\]]+)\]', r'\1', raw)   # "[Master Ball]" → "Master Ball"
+    raw = re.sub(r'(?<!\w)#(\d+)', r'\1', raw)  # "#59" → "59"
+    raw = re.sub(r'\s+', ' ', raw).strip()
+
     is_alias = False           # true → don't try typo fallback (alias is precise)
     name_part_for_typo = raw   # what to stem if the strict query yields nothing
     card_number: Optional[str] = None   # populated in the non-alias branch below;
