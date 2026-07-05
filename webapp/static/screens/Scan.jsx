@@ -547,6 +547,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
       {phase === 'result' && candidates.length > 0 && (
         <ScanResultSheet
           candidates={candidates}
+          searchQuery={query}
           tweaks={tweaks}
           capturedPhotoUrl={capturedPhotoUrl}
           capturedPhotoFile={capturedPhotoFile}
@@ -580,7 +581,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
 
 const SUGGESTED_TAGS = ['for trade', 'binder', 'pc', 'graded', 'gift'];
 
-function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFile, existingTags, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
+function ScanResultSheet({ candidates, searchQuery, tweaks, capturedPhotoUrl, capturedPhotoFile, existingTags, onAddToCollection, onAddWishlist, onSkip, onDetail }) {
   const cur = tweaks.currency;
   const [picked, setPicked] = useStateScan(0);
   const [setFilter, setSetFilter] = useStateScan('');
@@ -592,6 +593,11 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
   const [purchasePrice, setPurchasePrice] = useStateScan('');
   const [selectedTags, setSelectedTags] = useStateScan([]);
   const [newTag, setNewTag] = useStateScan('');
+  const [showManual, setShowManual] = useStateScan(false);
+  const [manualName, setManualName] = useStateScan('');
+  const [manualSet, setManualSet] = useStateScan('');
+  const [manualNum, setManualNum] = useStateScan('');
+  const [manualLang, setManualLang] = useStateScan('JP');
 
   const toggleTag = (tag) => setSelectedTags(prev =>
     prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
@@ -833,6 +839,86 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Manual entry — for JP/older cards not in any catalog */}
+        {!showManual ? (
+          <button className="tap" onClick={() => {
+            const q = searchQuery || '';
+            // Pre-fill name from best candidate or raw query (strip number + "japanese")
+            const baseName = candidates[0]?.name || q.replace(/\b\d+\/\d+\b/g, '').replace(/\bjapanese\b/gi, '').trim();
+            // Pre-fill card number if query contains N/N or bare number at end
+            const numMatch = q.match(/\b(\d+(?:\/\d+)?)\b/);
+            setManualName(baseName);
+            setManualSet('');
+            setManualNum(numMatch ? numMatch[1] : '');
+            setManualLang('JP');
+            setShowManual(true);
+          }} style={{
+            width: '100%', padding: '7px 0', borderRadius: 10,
+            background: 'transparent', color: 'var(--ink-4)',
+            fontSize: 11, fontWeight: 500,
+            border: '1px dashed var(--hairline-soft)',
+          }}>Not the right card? Add manually</button>
+        ) : (
+          <div style={{ background: 'var(--bg-2)', borderRadius: 12, padding: '12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-2)' }}>Manual entry</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input value={manualName} onChange={e => setManualName(e.target.value)}
+                placeholder="Card name"
+                style={{ flex: 1, background: 'var(--bg-1)', color: 'var(--ink)', border: '1px solid var(--hairline-soft)', borderRadius: 8, padding: '8px 10px', fontSize: 13, outline: 'none' }}/>
+              <input value={manualNum} onChange={e => setManualNum(e.target.value)}
+                placeholder="Card #"
+                style={{ width: 80, background: 'var(--bg-1)', color: 'var(--ink)', border: '1px solid var(--hairline-soft)', borderRadius: 8, padding: '8px 10px', fontSize: 13, outline: 'none' }}/>
+            </div>
+            <input value={manualSet} onChange={e => setManualSet(e.target.value)}
+              placeholder="Set name (e.g. Crimson Dive)"
+              style={{ background: 'var(--bg-1)', color: 'var(--ink)', border: '1px solid var(--hairline-soft)', borderRadius: 8, padding: '8px 10px', fontSize: 13, outline: 'none' }}/>
+            <div className="row gap-2">
+              {['EN', 'JP', 'CH'].map(l => (
+                <button key={l} className="tap" onClick={() => setManualLang(l)} style={{
+                  flex: 1, padding: '7px 0', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                  background: manualLang === l ? 'var(--ink)' : 'var(--bg-1)',
+                  color: manualLang === l ? 'var(--bg)' : 'var(--ink-3)',
+                  border: '1px solid var(--hairline-soft)',
+                }}>{l}</button>
+              ))}
+            </div>
+            <div className="row gap-2">
+              <button className="tap" onClick={() => setShowManual(false)} style={{
+                flex: 1, padding: '9px 0', borderRadius: 10, fontSize: 13,
+                background: 'var(--bg-1)', color: 'var(--ink-3)',
+                border: '1px solid var(--hairline-soft)',
+              }}>Cancel</button>
+              <button className="tap" disabled={!manualName.trim() || isAdding} onClick={async () => {
+                setIsAdding(true);
+                const langMap = { EN: 'english', JP: 'japanese', CH: 'chinese' };
+                try {
+                  await onAddToCollection({
+                    name: manualName.trim(),
+                    set: manualSet.trim() || null,
+                    code: manualNum.trim() || null,
+                    lang: manualLang,
+                    language: langMap[manualLang],
+                    usd: null,
+                    condition: 'NM',
+                    is_graded: false,
+                    grader: null,
+                    grade: null,
+                    purchase_price: Number(purchasePrice) || null,
+                    tags: selectedTags,
+                    ...(capturedPhotoFile ? { _capturedPhotoFile: capturedPhotoFile } : {}),
+                  });
+                } finally {
+                  setIsAdding(false);
+                }
+              }} style={{
+                flex: 2, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                background: 'var(--accent)', color: 'var(--accent-ink)',
+                opacity: (!manualName.trim() || isAdding) ? 0.5 : 1,
+              }}>{isAdding ? 'Adding…' : 'Add to Collection'}</button>
             </div>
           </div>
         )}

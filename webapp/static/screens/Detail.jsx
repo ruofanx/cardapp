@@ -161,6 +161,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   const [editPrice, setEditPrice] = useStateDetail('');
   const [editSetName, setEditSetName] = useStateDetail('');
   const [editCardNumber, setEditCardNumber] = useStateDetail('');
+  const [editLang, setEditLang] = useStateDetail('EN');
   const [editTags, setEditTags] = useStateDetail([]);
   const [newTag, setNewTag] = useStateDetail('');
   const [savingEdit, setSavingEdit] = useStateDetail(false);
@@ -397,6 +398,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     setEditPrice(c.purchase_price != null ? String(c.purchase_price) : '');
     setEditSetName(c.set || '');
     setEditCardNumber(c.code || '');
+    setEditLang(c.lang || 'EN');
     setEditTags(normalizeTagList(c.tags));
     setNewTag('');
     setEditing(true);
@@ -426,6 +428,8 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     if (nextSet && nextSet !== c.set) fields.set_name = nextSet;
     const nextNum = editCardNumber.trim();
     if (nextNum !== (c.code || '')) fields.card_number = nextNum || null;
+    const langMap = { EN: 'english', JP: 'japanese', CH: 'chinese' };
+    if (editLang !== (c.lang || 'EN')) fields.language = langMap[editLang] || 'english';
     const origTags = normalizeTagList(c.tags);
     const tagsChanged = origTags.length !== editTags.length
       || origTags.some((t, i) => t !== editTags[i]);
@@ -653,6 +657,23 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
                     padding: '10px 12px', fontSize: 13, outline: 'none', boxSizing: 'border-box',
                   }}
                 />
+              </div>
+            </div>
+
+            {/* Language */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 6 }}>
+                Language
+              </div>
+              <div className="row gap-2">
+                {['EN', 'JP', 'CH'].map(l => (
+                  <button key={l} className="tap" onClick={() => setEditLang(l)} style={{
+                    flex: 1, padding: '9px 0', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                    background: editLang === l ? 'var(--ink)' : 'var(--bg-2)',
+                    color: editLang === l ? 'var(--bg)' : 'var(--ink-3)',
+                    border: '1px solid var(--hairline-soft)',
+                  }}>{l}</button>
+                ))}
               </div>
             </div>
 
