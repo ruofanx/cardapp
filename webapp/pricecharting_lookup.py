@@ -383,6 +383,17 @@ def _image_cache_get(url: str) -> Optional[str]:
     return row[0]
 
 
+def _image_cache_has(url: str) -> bool:
+    """True if url has a fresh row in the image cache (even if image_base is NULL)."""
+    _init_image_cache()
+    conn = sqlite3.connect(str(CACHE_DB))
+    row = conn.execute(
+        "SELECT ts FROM pc_sealed_image_cache WHERE url = ?", (url,)
+    ).fetchone()
+    conn.close()
+    return bool(row and time.time() - row[0] <= CACHE_TTL_SECONDS)
+
+
 def _image_cache_set(url: str, image_base: Optional[str]) -> None:
     _init_image_cache()
     conn = sqlite3.connect(str(CACHE_DB))
@@ -515,7 +526,9 @@ async def lookup_raw_price(name: str, set_name: str, card_number: str,
 
     `variant` matters for OLD prints: 1st Edition and Shadowless live on
     separate PC pages and trade at different prices. Pass it through so
-    the URL builder prefers the right slug.
+    the URL builder prefers the right slug. Returns cover image URLs when
+    available (useful for pattern variants like Master Ball whose PC page
+    has a photo that differs from the generic TCG API scan).
     """
     urls = _candidate_urls(name, set_name, card_number, language, variant=variant)
     if not urls:
@@ -524,10 +537,12 @@ async def lookup_raw_price(name: str, set_name: str, card_number: str,
     if not prices_table:
         return None
     table, url = prices_table
+    image_url, image_url_large = _cover_image_urls(_image_cache_get(url))
     return PriceChartingResult(
         url=url, grade_label="Ungraded",
         price_usd=table.get("Ungraded"),
         all_prices=table, cached=False,
+        image_url=image_url, image_url_large=image_url_large,
     )
 
 
@@ -612,12 +627,26 @@ async def fetch_sealed_chart_history(
 
 async def _fetch_prices_with_cache(urls: list[str]) -> Optional[tuple[dict, str]]:
     """Walk URL candidates; return (price_table, url) for the first hit.
-    Cache hits return immediately; cache misses fetch and cache."""
+    Cache hits return immediately; cache misses fetch, cache prices, and cache
+    the cover image so `lookup_raw_price` can return it without a second fetch."""
     async with httpx.AsyncClient(timeout=15.0,
                                   headers={"User-Agent": USER_AGENT}) as client:
         for url in urls:
             cached = _cache_get(url)
             if cached is not None:
+                # Price cached but image may not have been cached on earlier
+                # fetches (before image caching was added). One-time re-fetch
+                # to populate the image cache; after that _image_cache_has
+                # returns True and this branch is skipped.
+                if not _image_cache_has(url):
+                    try:
+                        r = await client.get(url, follow_redirects=True)
+                        if r.status_code == 200:
+                            _image_cache_set(url, _parse_cover_image_base(r.text))
+                        else:
+                            _image_cache_set(url, None)
+                    except Exception:
+                        _image_cache_set(url, None)
                 return cached, url
             try:
                 r = await client.get(url, follow_redirects=True)
@@ -633,6 +662,12 @@ async def _fetch_prices_with_cache(urls: list[str]) -> Optional[tuple[dict, str]
             if not prices:
                 continue
             _cache_set(url, prices)
+            # Also cache the cover image (reuse the sealed-image cache table —
+            # same schema, keyed by URL). Cards have cover art too; having it
+            # lets lookup_raw_price return the PC photo for pattern variants
+            # (e.g. Master Ball Umbreon) where the TCG API image is generic.
+            if _image_cache_get(url) is None:
+                _image_cache_set(url, _parse_cover_image_base(r.text))
             return prices, url
     return None
 

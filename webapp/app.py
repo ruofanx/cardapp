@@ -438,6 +438,43 @@ def detach_tag(card_id: int, tag_id: int):
     return _card_to_dict(db.get_card(card_id))
 
 
+async def _auto_price_task(card_id: int, name: str, set_name: str, card_number: str,
+                           language: str, variant: Optional[str],
+                           is_graded: bool, grade_company: Optional[str],
+                           grade: Optional[float], condition: str) -> None:
+    """Fire-and-forget: resolve the best price (and cover image) for a newly-added card."""
+    try:
+        import pricecharting_lookup as pc
+        from refresh_job import _price_for_card
+        card = db.get_card(card_id)
+        if not card:
+            return
+        price = await _price_for_card(card)
+        if price is None:
+            return
+        updates: dict = {"current_market_price": price}
+        # If the card has no image yet (or only a generic TCG API scan), check
+        # whether PriceCharting has a cover photo — useful for pattern variants
+        # like "Master Ball" whose PC page has a photo that looks different
+        # from the plain holofoil scan in the Pokemon TCG API.
+        if not is_graded and variant:
+            try:
+                pc_result = await pc.lookup_raw_price(
+                    name, set_name, card_number, language=language, variant=variant
+                )
+                if pc_result and pc_result.image_url_large:
+                    current = db.get_card(card_id)
+                    if current and not current.image_url:
+                        updates["image_url"] = pc_result.image_url_large
+            except Exception:
+                pass
+        db.update_card(card_id, **updates)
+        db.log_price(card_id, price, source="auto_refresh")
+        log.info("auto-priced card %s (%s) → $%.2f", card_id, name, price)
+    except Exception as e:
+        log.warning("auto_price_task failed for card %s: %s", card_id, e)
+
+
 async def _backfill_history_task(card_id: int, name: str, set_name: str, card_number: str,
                                   language: str, variant: Optional[str], product_type: str) -> None:
     """Fire-and-forget async background task: seed price_history from PriceCharting chart data."""
@@ -478,6 +515,18 @@ def create_card(user_id: int, payload: CardCreate, background_tasks: BackgroundT
             db.log_price(saved.id, saved.current_market_price, source="create")
         except Exception as e:
             log.warning("price_history log on create failed: %s", e)
+    # Auto-price: resolve the best market price in the background so the card
+    # doesn't sit at the stale TCGplayer search-result price (often wrong for
+    # pattern variants like "Master Ball" or JP-only cards).
+    if saved.id:
+        background_tasks.add_task(
+            _auto_price_task,
+            saved.id, saved.name or "", saved.set_name or "",
+            saved.card_number or "", saved.language or "english",
+            saved.variant, bool(saved.is_graded),
+            saved.grade_company, float(saved.grade) if saved.grade else None,
+            saved.condition or "NM",
+        )
     # Backfill historical price data from PriceCharting in the background.
     # Skip graded cards — PriceCharting chart data is only for raw/ungraded.
     if saved.id and not saved.is_graded:
