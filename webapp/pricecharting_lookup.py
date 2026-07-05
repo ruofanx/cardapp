@@ -168,6 +168,156 @@ class PriceChartingSearchResult:
 # Slug + URL construction
 # ---------------------------------------------------------------------------
 
+# Japanese set name → PriceCharting set slug (used directly; no further slugification).
+# Keys are lowercased set names as they appear in the DB (both JP-character and
+# English transliterations). Values are the exact slug segment that follows
+# "pokemon-japanese-" in the PC URL.
+_JP_SET_PC_SLUG_MAP: dict[str, str] = {
+    # Pokemon Card 151 (SV2a) — PC uses "Scarlet & Violet 151" naming
+    "ポケモンカード151":            "scarlet-&-violet-151",
+    "pokemon card 151":             "scarlet-&-violet-151",
+    "card 151":                     "scarlet-&-violet-151",
+    "151":                          "scarlet-&-violet-151",
+    # Terastal Festival ex (SV4a)
+    "テラスタルフェスex":           "terastal-festival",
+    "terastal festival ex":         "terastal-festival",
+    "terastal festival":            "terastal-festival",
+    # Shiny Treasure ex (SV4a bonus set)
+    "シャイニートレジャーex":       "shiny-treasure-ex",
+    "shiny treasure ex":            "shiny-treasure-ex",
+    # Clay Burst / Snow Hazard (SV2D/SV2P)
+    "クレイバースト":               "clay-burst",
+    "clay burst":                   "clay-burst",
+    "スノーハザード":               "snow-hazard",
+    "snow hazard":                  "snow-hazard",
+    # Triplet Beat (SV1a)
+    "トリプレットビート":           "triplet-beat",
+    "triplet beat":                 "triplet-beat",
+    # Violet ex / Scarlet ex (SV1S/SV1V)
+    "スカーレットex":               "scarlet-ex",
+    "ヴァイオレットex":             "violet-ex",
+    "scarlet ex":                   "scarlet-ex",
+    "violet ex":                    "violet-ex",
+    # Future Flash / Ancient Roar (SV4M/SV4K)
+    "フューチャーフラッシュ":       "future-flash",
+    "エンシェントロアー":           "ancient-roar",
+    "future flash":                 "future-flash",
+    "ancient roar":                 "ancient-roar",
+    # Crimson Haze (SV5A)
+    "クリムゾンヘイズ":             "crimson-haze",
+    "crimson haze":                 "crimson-haze",
+    # Twilight Masquerade (SV6) / Stellar Crown (SV7)
+    "ナイトワンダラー":             "night-wanderer",
+    "night wanderer":               "night-wanderer",
+    # VSTAR Universe (S12a)
+    "vstar universe":               "vstar-universe",
+    # Nihil Zero (SV3P)
+    "ニルゼロ":                     "nihil-zero",
+    "nihil zero":                   "nihil-zero",
+}
+
+# Japanese card name → English slug fragment used in PriceCharting URLs.
+# Maps base names only (suffixes like "ex", "GX", "VSTAR" are handled separately).
+_JP_CARD_NAME_EN_MAP: dict[str, str] = {
+    # Common Pokémon
+    "フシギダネ": "bulbasaur", "フシギソウ": "ivysaur", "フシギバナ": "venusaur",
+    "ヒトカゲ": "charmander", "リザード": "charmeleon", "リザードン": "charizard",
+    "ゼニガメ": "squirtle", "カメール": "wartortle", "カメックス": "blastoise",
+    "ピカチュウ": "pikachu", "ライチュウ": "raichu", "ピチュー": "pichu",
+    "ミュウ": "mew", "ミュウツー": "mewtwo",
+    "ゲンガー": "gengar", "ゴース": "gastly", "ゴースト": "haunter",
+    "カイリュー": "dragonite", "ミニリュウ": "dratini", "ハクリュー": "dragonair",
+    "ラプラス": "lapras", "エビワラー": "hitmonchan", "サワムラー": "hitmonlee",
+    "ルギア": "lugia", "ホウオウ": "ho-oh",
+    "ピィ": "cleffa", "ピクシー": "clefable", "ピッピ": "clefairy",
+    "ニョロボン": "poliwrath", "ニョロゲロ": "poliwag", "ニョロゾ": "poliwhirl",
+    "ヤドン": "slowpoke", "ヤドラン": "slowbro", "ヤドキング": "slowking",
+    "イーブイ": "eevee",
+    "シャワーズ": "vaporeon", "サンダース": "jolteon", "ブースター": "flareon",
+    "エーフィ": "espeon", "ブラッキー": "umbreon",
+    "グレイシア": "glaceon", "リーフィア": "leafeon", "ニンフィア": "sylveon",
+    "ムゲンダイナ": "eternatus", "ザシアン": "zacian", "ザマゼンタ": "zamazenta",
+    "フリーザー": "articuno", "サンダー": "zapdos", "ファイヤー": "moltres",
+    "ヨルノズク": "noctowl", "デンリュウ": "ampharos", "バンギラス": "tyranitar",
+    "ソーナンス": "wobbuffet", "ハピナス": "blissey",
+    "ゴローニャ": "golem", "イワーク": "onix", "ハガネール": "steelix",
+    "カビゴン": "snorlax", "ヒポポタス": "hippopotas", "ドサイドン": "rhyperior",
+    "ゲッコウガ": "greninja", "ニンフィア": "sylveon",
+    "ガブリアス": "garchomp", "ルカリオ": "lucario", "リオル": "riolu",
+    "ゾロアーク": "zoroark", "ゾロア": "zorua",
+    "ギャラドス": "gyarados", "コイキング": "magikarp",
+    "ドラパルト": "dragapult", "ヒドイデ": "mareanie", "ドヒドイデ": "toxapex",
+    "イシヘンジン": "stonjourner",
+    "レシラム": "reshiram", "ゼクロム": "zekrom", "キュレム": "kyurem",
+    "コイキング": "magikarp",
+    "ソルガレオ": "solgaleo", "ルナアーラ": "lunala", "ネクロズマ": "necrozma",
+    "マジコスサーナイト": "gardevoir-ex",
+    "サーナイト": "gardevoir",
+    "ブリガロン": "chesnaught", "マフォクシー": "delphox", "ゲッコウガ": "greninja",
+    "ドラゴナイト": "dragonite",
+    "キングドラ": "kingdra", "ヤングース": "yungoos",
+    "イキリンコ": "squawkabilly", "マスカーニャ": "meowscarada",
+    "ホゲータ": "fuecoco", "ラウドボーン": "skeledirge",
+    "クワッス": "quaxly", "ウェーニバル": "quaquaval",
+    "ニャオハ": "sprigatito", "コライドン": "koraidon", "ミライドン": "miraidon",
+    "ウミトリオ": "palafin", "ウパー": "wooper", "ヌオー": "quagsire",
+    "パフュートン": "appletun", "ザロードン": "applin",
+    "テツノカイナ": "iron-hands", "テツノドクガ": "iron-moth",
+    "テツノイサハ": "iron-leaves", "テツノコウベ": "iron-crown",
+    "サケブシッポ": "flutter-mane", "チヲハウハネ": "chien-pao",
+    "イダイナキバ": "great-tusk", "テツノブジン": "iron-valiant",
+    "ハバタクカミ": "flutter-mane",
+    "ウネルミナモ": "walking-wake", "テツノワダチ": "iron-treads",
+    "カミッチュ": "comfey",
+    # Legendary / Mythical
+    "ケルディオ": "keldeo", "メロエッタ": "meloetta", "ゲノセクト": "genesect",
+    "ディアルガ": "dialga", "パルキア": "palkia", "ギラティナ": "giratina",
+    "グラードン": "groudon", "カイオーガ": "kyogre", "レックウザ": "rayquaza",
+    "アルセウス": "arceus", "ダークライ": "darkrai", "シェイミ": "shaymin",
+    "セレビィ": "celebi", "エンテイ": "entei", "ライコウ": "raikou",
+    "スイクン": "suicune", "クレセリア": "cresselia",
+    "ビクティニ": "victini", "ランドロス": "landorus", "テッシード": "ferroseed",
+    "ジラーチ": "jirachi", "デオキシス": "deoxys",
+    "カプ・テテフ": "tapu-lele", "カプ・コケコ": "tapu-koko",
+    "カプ・レヒレ": "tapu-fini", "カプ・ブルル": "tapu-bulu",
+    "ザルード": "zarude", "マナフィ": "manaphy", "フィオネ": "phione",
+    "ウルガモス": "volcarona", "シャンデラ": "chandelure",
+    "テールナー": "litwick", "ランプラー": "lampent",
+    # Common non-Pokémon cards
+    "博士の研究": "professors-research",
+    "マリィ": "marnie",
+    "ボスの指令": "bosss-orders",
+}
+
+# Suffixes to separate from the base Japanese name before mapping.
+_JP_NAME_SUFFIXES = re.compile(
+    r'^(.*?)(ex|EX|GX|V(?:MAX|STAR|-UNION)?|Tag Team)$', re.IGNORECASE
+)
+
+
+def _jp_name_to_en_slug(name: str) -> Optional[str]:
+    """Convert a Japanese card name to an English slug for PriceCharting.
+
+    Tries exact match first; then splits trailing suffixes (ex, GX, VSTAR…)
+    and maps the base name independently. Returns None when the name is
+    ASCII-only (no conversion needed) or not in the mapping table.
+    """
+    if name.isascii():
+        return None  # Already ASCII — caller handles normally
+    lower = name.lower()
+    if lower in _JP_CARD_NAME_EN_MAP:
+        return _JP_CARD_NAME_EN_MAP[lower]
+    # Strip trailing ASCII suffix and retry
+    m = _JP_NAME_SUFFIXES.match(name)
+    if m:
+        base_jp = m.group(1).strip()
+        suffix  = m.group(2).lower()
+        base_en = _JP_CARD_NAME_EN_MAP.get(base_jp.lower())
+        if base_en:
+            return f"{base_en}-{suffix}"
+    return None
+
+
 def _slug(s: str) -> str:
     s = s.lower()
     s = re.sub(r"['.,:!()&]", "", s)
@@ -203,15 +353,40 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
     that redirects to `/search-products` (PriceCharting's "no such page"
     behaviour), so dead variants drop out automatically.
     """
-    name_slug = _slug(name)
+    # --- Card name slug ----------------------------------------------------------
+    # For JP cards whose name is stored in Japanese, translate to EN for PC.
+    en_slug_from_jp = _jp_name_to_en_slug(name)
+    name_slug = en_slug_from_jp if en_slug_from_jp is not None else _slug(name)
+
     num = _normalize_card_number(card_number)
 
+    # --- Set slug ----------------------------------------------------------------
     raw_set = (set_name or "").strip()
-    set_clean = re.sub(r"^(SV|S&V|Scarlet\s*&\s*Violet|SWSH|Sword\s*&\s*Shield)[:\s]+",
-                        "", raw_set, flags=re.IGNORECASE).strip()
-    set_no_tg = re.sub(r"\s+Trainer\s+Gallery\s*$", "", set_clean, flags=re.IGNORECASE).strip()
 
-    base_slugs = list(dict.fromkeys([_slug(s) for s in (set_clean, set_no_tg, raw_set) if s]))
+    # Check the override map first: covers JP-only sets whose PC slug can't be
+    # derived from the stored name (e.g. ポケモンカード151 → scarlet-&-violet-151,
+    # "Pokemon Card 151" → same, "Pokemon Japanese Terastal Festival" → terastal-festival).
+    # Strip common prefixes before lookup so "Pokemon Japanese Terastal Festival"
+    # and "Terastal Festival" both hit the same key.
+    _raw_lower = raw_set.lower()
+    # Strip "Pokemon Japanese " / "Pokemon " prefix for DB entries that include it
+    _raw_stripped = re.sub(r"^pokemon\s+japanese\s+", "", _raw_lower).strip()
+    _raw_stripped = re.sub(r"^pokemon\s+", "", _raw_stripped).strip()
+    _forced_slug: Optional[str] = (
+        _JP_SET_PC_SLUG_MAP.get(_raw_lower)
+        or _JP_SET_PC_SLUG_MAP.get(_raw_stripped)
+        or _JP_SET_PC_SLUG_MAP.get(_raw_lower.replace("ポケモン", "").strip())
+    )
+    if _forced_slug:
+        base_slugs = [_forced_slug]
+    else:
+        # Standard derivation — strip common set-name prefixes then slugify.
+        set_clean = re.sub(
+            r"^(SV|S&V|Scarlet\s*&\s*Violet|SWSH|Sword\s*&\s*Shield|Pokemon\s+Japanese\s+)[:\s]*",
+            "", raw_set, flags=re.IGNORECASE,
+        ).strip()
+        set_no_tg = re.sub(r"\s+Trainer\s+Gallery\s*$", "", set_clean, flags=re.IGNORECASE).strip()
+        base_slugs = list(dict.fromkeys([_slug(s) for s in (set_clean, set_no_tg, raw_set) if s]))
 
     # ----- Detect variant flags from the user/LLM-provided variant string ----
     v = (variant or "").strip().lower()
