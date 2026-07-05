@@ -357,6 +357,19 @@ def is_relevant_title(title: str, query: CardQuery) -> bool:
     name_tokens = [w.lower() for w in re.findall(r"\w+", query.card.name) if len(w) > 2]
     if name_tokens and not any(tok in t for tok in name_tokens):
         return False
+    # Card number filter: if we have a number, require it in the title.
+    # eBay's keyword search is loose — it returns listings for other card
+    # numbers in the same set (e.g. querying "063/193" also surfaces "130/098").
+    # Accept the numerator with and without leading zeros: "063" and "63".
+    cn = (query.card.card_number or "").strip()
+    if cn:
+        numerator = cn.split("/")[0].strip()
+        # Build the set of forms to accept: "063", "63" (stripped), "063/193"
+        num_forms = {numerator, numerator.lstrip("0") or numerator}
+        if "/" in cn:
+            num_forms.add(cn)
+        if not any(form in t for form in num_forms):
+            return False
     if not query.is_graded:
         if re.search(r"\b(psa|bgs|cgc|sgc)\b\s*\d", t):
             return False
