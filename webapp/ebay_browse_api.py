@@ -238,11 +238,18 @@ async def median_relevant_price(
         "items": [EbayItem, ...]   # the picked listings, for the UI
     }
     """
-    parts = [name.strip()]
+    # Cards stored with Japanese/Chinese names (e.g. "ピカチュウ") won't match
+    # English eBay listing titles ("Pikachu 173/165 Pokemon Card 151...").
+    # Omit non-ASCII names from the query string entirely; set_name + card_number
+    # + "Japanese" are specific enough to reach the right listings.
+    name_is_non_ascii = any(ord(c) > 127 for c in name)
+    parts = ([] if name_is_non_ascii else [name.strip()])
     if card_number:
         parts.append(str(card_number).strip())
     if set_name:
-        parts.append(set_name.strip())
+        # Also strip non-ASCII from set_name for the same reason
+        ascii_set = "".join(c for c in set_name if ord(c) < 128).strip()
+        parts.append(ascii_set if ascii_set else set_name.strip())
     if language.lower() == "japanese":
         parts.append("Japanese")
     if grade_company and grade is not None:
@@ -260,11 +267,8 @@ async def median_relevant_price(
     # number (if provided). eBay's relevance ranking sometimes surfaces
     # other cards from the same set when the query is sparse.
     name_tokens = [t.lower() for t in name.split() if len(t) >= 3]
-    # Cards stored with Japanese/Chinese names (non-ASCII) won't appear in
-    # English eBay titles, which use transliterations ("Pikachu" not "ピカチュウ").
-    # Skip the name-token requirement for these — card number + "Japanese"
-    # in the query already narrows results sufficiently.
-    name_is_non_ascii = any(ord(c) > 127 for c in name)
+    # For non-ASCII names, skip the name-token check (eBay titles use the
+    # English transliteration; card number + "Japanese" filter sufficiently).
     num_str = (str(card_number).split("/")[0].strip() if card_number else "")
     relevant = []
     for it in items:
