@@ -697,6 +697,19 @@ async def search_cards(query: str, limit: int = 20,
         name_part = rest.strip()
         if "master ball" in rest_before_subtype.lower() and "master ball" not in rest.lower():
             holo_pattern_variant = "Master Ball"
+
+        # Second-pass number extraction: after stripping set/subtype modifiers,
+        # a trailing bare number (e.g. "umbreon 59" after stripping "master ball"
+        # and "prismatic evolutions") is almost certainly a card number.
+        # The primary `_extract_card_number` only accepts N/M or alpha-prefix forms
+        # to avoid ambiguity on raw queries; here the context makes it safe.
+        if card_number is None and name_part:
+            _trailing_num = re.search(r'(?:^|\s)(\d{1,3})(?:\s|$)', name_part)
+            if _trailing_num:
+                card_number = str(int(_trailing_num.group(1)))
+                name_part = (name_part[:_trailing_num.start()] + name_part[_trailing_num.end():]).strip()
+                name_part = re.sub(r'\s+', ' ', name_part).strip()
+
         name_part_for_typo = name_part or raw
 
         clauses = []
@@ -814,12 +827,13 @@ async def search_cards(query: str, limit: int = 20,
 
     # Propagate holo-pattern variants (e.g. "Master Ball") stripped from the
     # query so they flow into the stored card and PriceCharting URL builder.
-    # Override generic holo/normal labels but preserve printing distinctions
-    # like "1st Edition" or "Shadowless" that the user didn't ask for.
+    # Override plain holo/normal labels (user wants this specific pattern) but
+    # preserve "Reverse Holo" (a distinct product) and printing distinctions
+    # like "1st Edition"/"Shadowless" the user didn't ask for.
     if holo_pattern_variant:
-        _generic_variants = {None, "Holo", "Rare Holo", "Normal", "Reverse Holo", "Holofoil"}
+        _overridable_variants = {None, "Holo", "Rare Holo", "Normal", "Holofoil"}
         for r in api_results:
-            if r.variant in _generic_variants:
+            if r.variant in _overridable_variants:
                 r.variant = holo_pattern_variant
 
     # Attach live (PriceCharting) per-grade prices to each result so the
