@@ -106,7 +106,7 @@ function denormalizeLang(v) {
 export function normalizeCard(c) {
   if (!c || typeof c !== 'object') return null
   const usd = num(c.current_market_price) ?? num(c.market_value_usd)
-           ?? num(c.estimated_price) ?? num(c.market_price)
+           ?? num(c.estimated_price) ?? num(c.live_prices?.ungraded) ?? num(c.market_price)
            ?? num(c.usd) ?? num(c.price)
            ?? num(c.value) ?? num(c.market_value) ?? num(c.fair_value)
            ?? null
@@ -132,7 +132,8 @@ export function normalizeCard(c) {
     variant:   c.variant ?? c.rarity ?? null,
     hp:        c.hp ?? null,
     image_url: (() => {
-      const raw = c.image_url ?? c.image ?? null
+      const pcImage = c.live_prices?.image_url ?? null
+      const raw = pcImage || (c.image_url ?? c.image ?? null)
       const lang = normalizeLang(c.language ?? c.lang)
       if (raw && (lang === 'JP' || lang === 'CH')) {
         if (raw.includes('images.pokemontcg.io')) return null
