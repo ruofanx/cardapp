@@ -923,10 +923,12 @@ function ScanResultSheet({ candidates, searchQuery, tweaks, capturedPhotoUrl, ca
           </div>
         )}
 
-        {/* 1st Edition toggle — JP/CH XY/BW-era cards often have both 1st
-            Edition and Unlimited printings but TCGdex doesn't always provide
-            that distinction. Let the user flag it here before adding. */}
-        {card && (card.lang === 'JP' || card.lang === 'CH') && !window.api?.isSealedProduct?.(card) && (
+        {/* 1st Edition toggle — WotC-era EN + older JP/CH cards may have
+            both 1st Edition and Unlimited printings. EN: the API has both as
+            separate price variants (1stEditionHolofoil vs holofoil). JP/CH:
+            TCGdex often doesn't distinguish — the toggle just flags the variant
+            so pricing can select the right TCGplayer key. */}
+        {card && !window.api?.isSealedProduct?.(card) && (
           <button className="tap" onClick={() => setIsFirstEd(v => !v)} style={{
             width: '100%', padding: '8px 0', borderRadius: 12,
             background: isFirstEd ? 'oklch(0.45 0.16 25)' : 'var(--bg-2)',

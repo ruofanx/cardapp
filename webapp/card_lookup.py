@@ -304,6 +304,10 @@ RARITY_TERMS = [
 SUBTYPE_TERMS = [
     ("vstar", "VSTAR"), ("vmax", "VMAX"),
     ("ex",    "ex"),    ("gx",   "GX"), (" v ", "V"),
+    # Printing variants — strip from the name clause; no API subtype filter.
+    # "1st edition articuno fossil" → name:"articuno*" set.name:"fossil*"
+    ("1st edition", None), ("first edition", None),
+    ("shadowless",  None), ("unlimited",     None),
 ]
 
 # Common set-name fragments we recognise. The API accepts wildcards in set
