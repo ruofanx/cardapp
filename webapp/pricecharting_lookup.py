@@ -219,6 +219,7 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
     is_first_ed   = "1st" in v or "first edition" in v
     is_shadowless = "shadowless" in v
     is_reverse    = "reverse" in v
+    is_master_ball = "master ball" in v
 
     # ----- Name-slug qualifiers: try most specific first ----------------------
     # The qualifier is inserted between the card name and the number, e.g.
@@ -236,6 +237,10 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
         name_qualifiers += ["shadowless"]
     elif is_reverse:
         name_qualifiers += ["reverse-holo"]
+    elif is_master_ball:
+        # Prismatic Evolutions Master Ball pattern has its own PC page:
+        # e.g. pokemon-prismatic-evolutions/umbreon-master-ball-59
+        name_qualifiers += ["master-ball"]
     name_qualifiers.append("")    # plain name-num — final fallback
 
     # ----- Set-slug variants: some cards use `set-1st-edition` instead --------

@@ -93,6 +93,9 @@ _VARIANT_KEY_PREFS: list[tuple[str, list[str]]] = [
     ("rainbow",                   ["holofoil"]),
     ("hyper",                     ["holofoil"]),
     ("promo",                     ["holofoil", "normal"]),
+    # Prismatic Evolutions holo-pattern variants — separate PC pages, no
+    # distinct TCGplayer key yet; prefer masterBallHolofoil if it ever appears.
+    ("master ball",               ["masterBallHolofoil", "holofoil"]),
 ]
 
 
@@ -308,6 +311,8 @@ SUBTYPE_TERMS = [
     # "1st edition articuno fossil" → name:"articuno*" set.name:"fossil*"
     ("1st edition", None), ("first edition", None),
     ("shadowless",  None), ("unlimited",     None),
+    # Prismatic Evolutions holo-pattern — "umbreon master ball 59" → name:"umbreon*" number:"59"
+    ("master ball", None),
 ]
 
 # Common set-name fragments we recognise. The API accepts wildcards in set
@@ -675,6 +680,7 @@ async def search_cards(query: str, limit: int = 20,
     card_number: Optional[str] = None   # populated in the non-alias branch below;
                                         # used by the narrower-fallback in fetch loop
     name_part: str = ""
+    holo_pattern_variant: Optional[str] = None  # e.g. "Master Ball" — injected on results below
 
     # 1. Alias expansion (e.g. "moonbreon" → full name+set+number query)
     expanded = _expand_alias(raw)
@@ -686,8 +692,11 @@ async def search_cards(query: str, limit: int = 20,
         rest, card_number = _extract_card_number(raw)
         rest, rarity = _extract_rarity(rest)
         rest, set_hint = _extract_set(rest)
+        rest_before_subtype = rest
         rest, subtype = _extract_subtype(rest)
         name_part = rest.strip()
+        if "master ball" in rest_before_subtype.lower() and "master ball" not in rest.lower():
+            holo_pattern_variant = "Master Ball"
         name_part_for_typo = name_part or raw
 
         clauses = []
@@ -802,6 +811,16 @@ async def search_cards(query: str, limit: int = 20,
                 market_price_override=variant_price,
             ))
     api_results = api_results[:limit]
+
+    # Propagate holo-pattern variants (e.g. "Master Ball") stripped from the
+    # query so they flow into the stored card and PriceCharting URL builder.
+    # Override generic holo/normal labels but preserve printing distinctions
+    # like "1st Edition" or "Shadowless" that the user didn't ask for.
+    if holo_pattern_variant:
+        _generic_variants = {None, "Holo", "Rare Holo", "Normal", "Reverse Holo", "Holofoil"}
+        for r in api_results:
+            if r.variant in _generic_variants:
+                r.variant = holo_pattern_variant
 
     # Attach live (PriceCharting) per-grade prices to each result so the
     # scan-screen grade/condition toggles can render real numbers instantly

@@ -215,6 +215,7 @@ async def median_relevant_price(
     language: str = "english",
     grade_company: Optional[str] = None,
     grade: Optional[float] = None,
+    variant: Optional[str] = None,
     sample_size: int = 8,
     marketplace: str = DEFAULT_MARKETPLACE,
     sort: Optional[str] = None,
@@ -255,6 +256,11 @@ async def median_relevant_price(
     if grade_company and grade is not None:
         grade_str = str(int(grade)) if grade == int(grade) else str(grade)
         parts.append(f"{grade_company} {grade_str}")
+    # Holo-pattern variants (e.g. "Master Ball") must appear in listing titles
+    # to distinguish them from the base version (very different price).
+    v_lower = (variant or "").lower()
+    if "master ball" in v_lower:
+        parts.append("Master Ball")
     query = " ".join(p for p in parts if p)
 
     # Over-fetch so the filter step has room to drop irrelevant titles
@@ -295,6 +301,10 @@ async def median_relevant_price(
         ):
             continue
         if grade_company and grade_company.lower() not in t:
+            continue
+        # Holo-pattern filter: listings for Master Ball pattern must say so in
+        # the title; without this, cheap base-version listings pollute the median.
+        if "master ball" in v_lower and "master ball" not in t:
             continue
         if it.price_usd is None or it.price_usd <= 0:
             continue
