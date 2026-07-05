@@ -127,7 +127,7 @@
     // of misleading "$0.00" for cards Cardmarket / TCGplayer doesn't price
     // (most JA-only sets, brand-new promos, etc.).
     const usd = num(c.current_market_price) ?? num(c.market_value_usd)
-             ?? num(c.estimated_price) ?? num(c.market_price)
+             ?? num(c.estimated_price) ?? num(c.live_prices?.ungraded) ?? num(c.market_price)
              ?? num(c.usd) ?? num(c.price)
              ?? num(c.value) ?? num(c.market_value) ?? num(c.fair_value)
              ?? null;
@@ -159,7 +159,12 @@
       // Exception: SV-era EN tcgdex images are allowed because JP and EN SV
       // cards share identical illustration art (JP is the source).
       image_url: (() => {
-        const raw = c.image_url ?? c.image ?? null;
+        // Prefer PriceCharting cover photo for pattern variants (Master Ball
+        // etc.) — the TCG API only has a standard artwork scan, not the holo
+        // pattern. Only applies when live_prices carries an image (search
+        // results); stored collection cards use their DB image_url directly.
+        const pcImage = c.live_prices?.image_url ?? null;
+        const raw = pcImage || c.image_url ?? c.image ?? null;
         const lang = normalizeLang(c.language ?? c.lang);
         if (raw && (lang === 'JP' || lang === 'CH')) {
           if (raw.includes('images.pokemontcg.io')) return null;

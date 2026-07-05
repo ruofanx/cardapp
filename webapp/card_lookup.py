@@ -657,6 +657,14 @@ async def _attach_live_prices(result: CardLookupResult,
         return
     live["source"] = "pricecharting"
     live["url"] = url
+    # Include cover image so search filmstrip can show the actual card photo
+    # (especially useful for holo-pattern variants like Master Ball where the
+    # TCG API only has the standard artwork scan).
+    img_base = pc._image_cache_get(url)
+    if img_base:
+        _, img_large = pc._cover_image_urls(img_base)
+        if img_large:
+            live["image_url"] = img_large
     result.live_prices = live
 
 
