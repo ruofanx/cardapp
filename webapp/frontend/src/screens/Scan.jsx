@@ -140,7 +140,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
         const tasks = [];
         if (api.searchPokemonTCG) tasks.push(['Pokemon TCG', api.searchPokemonTCG({ name: seedName }, { pageSize: 20 })]);
         if (api.searchTCGdex)     tasks.push(['TCGdex EN',   api.searchTCGdex({ name: seedName }, { pageSize: 20, lang: 'en' })]);
-        if (api.searchTCGdex && names?.ja) tasks.push(['TCGdex JA',   api.searchTCGdex({ name: names.ja }, { pageSize: 15, lang: 'ja', dbLang: 'ja' })]);
+        if (api.searchTCGdexJP && names?.ja) tasks.push(['TCGdex JA',   api.searchTCGdexJP(names.ja, { pageSize: 15 })]);
         if (api.searchTCGdex && names?.zh) tasks.push(['TCGdex ZH-TW', api.searchTCGdex({ name: names.zh }, { pageSize: 15, lang: 'ch', dbLang: 'zh-tw' })]);
         if (api.searchTCGdex && names?.zh) tasks.push(['TCGdex ZH-CN', api.searchTCGdex({ name: names.zh }, { pageSize: 15, lang: 'ch', dbLang: 'zh-cn' })]);
         // Final fallback: PriceCharting indexes some Chinese-exclusive sets

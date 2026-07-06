@@ -15,7 +15,7 @@ FastAPI backend + React/Babel PWA frontend, served together on port 8000.
 │   ├── card_lookup.py       # Pokemon TCG API (EN cards + TCGplayer prices)
 │   ├── tcgdex_lookup.py     # TCGdex (JP cards + Cardmarket EUR prices)
 │   ├── pricecharting_lookup.py  # PriceCharting scraper (graded + raw)
-│   ├── raw_price_resolver.py    # Shared raw-card baseline + PriceCharting sold-comp blend
+│   ├── raw_price_resolver.py    # Sold-anchor + listing-trend price model (see Pricing logic)
 │   ├── ebay_lookup.py       # eBay sold listings endpoint + 24h cache + optional ScraperAPI
 │   ├── ebay_browse_api.py   # eBay Browse API (active listings, catalog fallback)
 │   ├── refresh_job.py       # APScheduler: daily 7am price refresh + weekly trend-history refresh
@@ -95,18 +95,21 @@ fixed 2026-06-07 by reordering the mounts.)
 - **Graded** → PriceCharting first; falls back to `GRADED_MULTIPLIERS` table in
   `app.py`, using the raw NM baseline from `raw_price_resolver.resolve_raw_price()`.
 - **Raw (EN + JP)** → `webapp/raw_price_resolver.py` (`resolve_raw_price()`),
-  shared by `/api/refresh-price` and the daily refresh job:
-  1. **Baseline** — JP: eBay Browse API median of active listings; otherwise
-     TCGplayer via Pokemon TCG API (variant-aware key selection — default key
-     `holofoil` (Unlimited) when variant absent, NOT `max()`) or Cardmarket
-     EUR (JP, via TCGdex); JP last-ditch: eBay sold median.
-  2. **PriceCharting "Ungraded" cross-check** — sold-comp-derived, fetched for
-     ALL raw cards (1st Edition / Shadowless included via PriceCharting's
-     separate product page). The previous JP/old-print-only gate is gone.
-  3. **Blend** — if both are present and diverge by more than
-     `RAW_PRICE_DIVERGENCE_THRESHOLD` (15%), use PriceCharting's price (it's
-     closer to "what this is actually selling for"); otherwise keep the
-     catalogue baseline unchanged.
+  shared by `/api/refresh-price` and the daily refresh job. All three signals
+  are fetched in parallel (`asyncio.gather`) then combined:
+  1. **Sold anchor** (primary) — PriceCharting "Ungraded" for any language
+     (aggregated eBay sold comps, most accurate). EN fallback: TCGplayer market
+     price (also a rolling 30-day sale median, sold-based). JP-only: Cardmarket
+     EUR is listing-based, treated as a trend signal (not an anchor).
+  2. **Trend signal** — eBay Browse API active-listing median for all cards.
+     For JP: retries with a wider name-only query if primary result looks wrong
+     (SIR-range card numbers, thin sample < 3). This is direction, not price.
+  3. **Blend** — `trend = (ask_median / sold_base) - 1`, clamped to ±`TREND_CAP`
+     (15%). `price = sold_base × (1 + trend_adj)`. Rising ask prices push the
+     estimate up; softening asks pull it down. Avoids chasing thin Browse samples.
+  4. **Fallbacks** — Browse-only (no sold data): apply `BROWSE_HAIRCUT` (12%)
+     discount. Cardmarket-only (JP, no Browse): also apply haircut. Last resort:
+     eBay sold HTML via ScraperAPI (almost always 403 without it).
 
 ### eBay parser (`pricing_engine.py → parse_ebay_sold_html`)
 Splits HTML on `<li class="s-item">` boundaries, extracts date/price/title/url

@@ -225,3 +225,41 @@ async def lookup_jp_card(name: str, set_name: Optional[str] = None,
             log.warning("tcgdex name search failed: %s", e)
 
     return None
+
+
+async def search_jp_candidates(name: str, limit: int = 15) -> list[JpCardResult]:
+    """Search TCGdex JP by name, return up to `limit` full results.
+
+    Used by the backend /api/cards/search/jp route so JP widening results
+    pass through _attach_live_prices instead of being fetched client-side.
+    """
+    import asyncio
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            r = await client.get(f"{TCGDEX_BASE}/cards",
+                                  params={"name": name.strip()})
+            if r.status_code != 200:
+                return []
+            items = r.json()
+            if not isinstance(items, list) or not items:
+                return []
+
+            detail_tasks = [
+                client.get(f"{TCGDEX_BASE}/cards/{thin['id']}")
+                for thin in items[:limit]
+                if thin.get("id")
+            ]
+            responses = await asyncio.gather(*detail_tasks, return_exceptions=True)
+            results = []
+            for resp in responses:
+                if isinstance(resp, Exception):
+                    continue
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("name"):
+                        results.append(_to_result(data))
+            return results
+        except httpx.HTTPError as e:
+            log.warning("tcgdex jp search_jp_candidates failed for %r: %s", name, e)
+            return []

@@ -896,6 +896,49 @@ async def search_cards(query: str, limit: int = 20,
     return api_results
 
 
+async def search_jp_cards(name: str, limit: int = 15) -> list[CardLookupResult]:
+    """Search TCGdex JP for cards matching `name`, with PriceCharting prices.
+
+    Routes the frontend's TCGdex JA widening through the backend so that
+    JP cards (e.g. Neo Genesis Lugia) get live_prices attached, instead of
+    showing "—" in the filmstrip because the client-side searchTCGdex call
+    bypasses _attach_live_prices.
+    """
+    import asyncio
+    from tcgdex_lookup import search_jp_candidates
+
+    jp_hits = await search_jp_candidates(name, limit)
+    results: list[CardLookupResult] = []
+    for jr in jp_hits:
+        tcg_id = (f"{jr.set_id}-{jr.card_number}"
+                  if jr.set_id and jr.card_number else None)
+        results.append(CardLookupResult(
+            name=jr.name,
+            set_name=jr.set_name,
+            card_number=jr.card_number,
+            image_url=jr.image_url,
+            image_url_large=jr.image_url_large,
+            rarity=jr.rarity,
+            market_price=jr.market_price,
+            tcg_id=tcg_id,
+            language="japanese",
+            source="tcgdex",
+        ))
+
+    if results:
+        async def _bounded(r: CardLookupResult) -> None:
+            try:
+                await asyncio.wait_for(_attach_live_prices(r), timeout=3.0)
+            except asyncio.TimeoutError:
+                log.info("live_prices timeout for JP card %r", r.name)
+            except Exception as e:
+                log.warning("live_prices error for JP %r: %s", r.name, e)
+
+        await asyncio.gather(*[_bounded(r) for r in results], return_exceptions=True)
+
+    return results
+
+
 import re
 
 

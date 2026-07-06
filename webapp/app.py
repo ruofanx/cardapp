@@ -1283,6 +1283,21 @@ async def cards_search(q: str, limit: int = 20):
     return {"results": [r.to_dict() for r in results]}
 
 
+@app.get("/api/cards/search/jp")
+async def cards_search_jp(q: str = "", limit: int = 15):
+    """Search TCGdex JP by name with PriceCharting prices attached.
+
+    Replaces the direct client-side searchTCGdex(lang='ja') call so that JP
+    widening results (e.g. Neo Genesis Lugia) go through _attach_live_prices
+    and show real prices in the Scan filmstrip instead of '—'.
+    """
+    q = q.strip()
+    if len(q) < 2:
+        return []
+    results = await card_lookup.search_jp_cards(q, limit=limit)
+    return [r.to_dict() for r in results]
+
+
 @app.get("/api/pricecharting/search")
 async def pricecharting_search(q: str, limit: int = 10):
     """Last-resort card-identity search — PriceCharting indexes some

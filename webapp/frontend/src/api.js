@@ -42,6 +42,7 @@ const P = {
   userPortfolio:       (uid) => `/api/users/${uid}/portfolio`,
   userCards:           (uid) => `/api/users/${uid}/cards`,
   cardsSearch:         (q) => `/api/cards/search?q=${encodeURIComponent(q)}`,
+  cardsSearchJP:       (q, limit) => `/api/cards/search/jp?q=${encodeURIComponent(q)}&limit=${limit}`,
   pricechartingSearch: (q, limit) => `/api/pricecharting/search?q=${encodeURIComponent(q)}&limit=${limit}`,
   card:                (cid) => `/api/cards/${cid}`,
   cardPhoto:           (cid) => `/api/cards/${cid}/photo`,
@@ -589,6 +590,18 @@ export const api = {
       }
     }
     return out
+  },
+
+  async searchTCGdexJP(jpName, { pageSize = 15 } = {}) {
+    if (!jpName) return []
+    try {
+      const data = await request(P.cardsSearchJP(String(jpName).trim(), pageSize))
+      const list = Array.isArray(data) ? data : (data?.results ?? [])
+      return list.map(r => normalizeCard(r)).filter(Boolean)
+    } catch (e) {
+      console.warn('[searchTCGdexJP] backend error, falling back to direct TCGdex:', e)
+      return this.searchTCGdex({ name: jpName }, { pageSize, lang: 'ja', dbLang: 'ja' })
+    }
   },
 
   async searchPriceCharting(query, { pageSize = 10 } = {}) {

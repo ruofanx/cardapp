@@ -53,6 +53,7 @@
     userPortfolio:   (uid) => `/api/users/${uid}/portfolio`,
     userCards:       (uid) => `/api/users/${uid}/cards`,
     cardsSearch:     (q) => `/api/cards/search?q=${encodeURIComponent(q)}`,
+    cardsSearchJP:   (q, limit) => `/api/cards/search/jp?q=${encodeURIComponent(q)}&limit=${limit}`,
     pricechartingSearch: (q, limit) => `/api/pricecharting/search?q=${encodeURIComponent(q)}&limit=${limit}`,
     card:            (cid) => `/api/cards/${cid}`,
     cardPhoto:       (cid) => `/api/cards/${cid}/photo`,
@@ -792,6 +793,21 @@
       }
       console.info(`[searchTCGdex/${lang}] ${out.length} hits for "${cleanName}"`);
       return out;
+    },
+
+    // Routes the TCGdex JA widening search through the backend so that JP
+    // cards (e.g. Neo Genesis Lugia) get PriceCharting live_prices attached
+    // and show real prices in the Scan filmstrip instead of "—".
+    async searchTCGdexJP(jpName, { pageSize = 15 } = {}) {
+      if (!jpName) return [];
+      try {
+        const data = await request(P.cardsSearchJP(String(jpName).trim(), pageSize));
+        const list = Array.isArray(data) ? data : (data && data.results ? data.results : []);
+        return list.map(r => normalizeCard(r)).filter(Boolean);
+      } catch (e) {
+        console.warn('[searchTCGdexJP] backend error, falling back to direct TCGdex:', e);
+        return this.searchTCGdex({ name: jpName }, { pageSize, lang: 'ja', dbLang: 'ja' });
+      }
     },
 
     // Last-resort identity fallback — PriceCharting indexes some
