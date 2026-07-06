@@ -533,17 +533,19 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
     urls: list[str] = []
     for set_slug in set_variants:
         for qual in name_qualifiers:
-            if qual:
-                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{qual}-{num}"
-            else:
-                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{num}"
-            urls.append(url)
-            # For old JP sets: also try the Pokédex number in place of the card number
+            # For old JP sets PriceCharting keys on National Pokédex number, not
+            # the printed card number.  Try the Pokédex URL *first* so we don't
+            # accidentally match a different product at the card-number slot.
             if pokedex_num and pokedex_num != num and set_slug in _PC_POKEDEX_NUM_SETS:
                 if qual:
                     urls.append(f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{qual}-{pokedex_num}")
                 else:
                     urls.append(f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{pokedex_num}")
+            if qual:
+                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{qual}-{num}"
+            else:
+                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{num}"
+            urls.append(url)
     # Final dedupe preserving order
     out_seen = set()
     return [u for u in urls if not (u in out_seen or out_seen.add(u))]
