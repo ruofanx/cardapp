@@ -1059,67 +1059,19 @@ async def _refresh_sealed_price(req: RefreshPriceRequest) -> dict:
 async def refresh_price(req: RefreshPriceRequest):
     """Get a market-price estimate for a given condition or grade.
 
-    Headline source for BOTH raw and graded is the mean of the 5 most-recent
-    eBay sold listings (`ebay_lookup.lookup_recent_n_mean`). It's the closest
-    proxy to "what is this card actually trading at right now."
-
-    Fallback order if eBay returns nothing (sandbox 403, anti-bot block, or
-    genuinely thin comps):
-      - Graded → PriceCharting per-grade, then NM × grader multiplier
-      - Raw    → raw_price_resolver.resolve_raw_price() — catalogue baseline
-        (TCGplayer / Cardmarket / eBay Browse) blended with PriceCharting's
-        sold-comp-derived "Ungraded" price
+    Raw cards:   raw_price_resolver (PriceCharting sold anchor + eBay Browse trend).
+    Graded cards: PriceCharting per-grade → JP Browse with grade qualifier
+                  → eBay HTML recent-mean (>= 3 samples) → NM × multiplier fallback.
     """
     if req.product_type and req.product_type != "card":
         return await _refresh_sealed_price(req)
 
-    # ----- eBay 5-recent-mean (primary for both raw & graded) --------------
-    ebay_recent = None
-    if req.name:
-        try:
-            ebay_recent = await ebay_lookup.lookup_recent_n_mean(
-                name=req.name,
-                set_name=req.set_name or "",
-                card_number=req.card_number or "",
-                language=req.language,
-                condition=(req.condition or "NM") if not req.is_graded else "NM",
-                is_graded=req.is_graded,
-                grade_company=req.grade_company if req.is_graded else None,
-                grade=req.grade if req.is_graded else None,
-                variant=req.variant,
-                n=5,
-                period_days=90,
-            )
-        except Exception as e:
-            log.warning("eBay recent-N-mean lookup failed: %s", e)
-            ebay_recent = None
-
-    if ebay_recent and ebay_recent.sample_size >= 1:
-        grade_tag = ""
-        if req.is_graded and req.grade_company and req.grade is not None:
-            grade_tag = f"{req.grade_company} {req.grade} · "
-        cache_tag = "cached" if ebay_recent.cached else "live"
-        return {
-            "estimated_price": ebay_recent.mean_usd,
-            "nm_baseline_usd": None,
-            "multiplier": None,
-            "source": (f"eBay sold mean · {grade_tag}n={ebay_recent.sample_size} "
-                       f"of last {ebay_recent.requested_n} ({cache_tag})"),
-            "note": (f"Mean of the {ebay_recent.sample_size} most-recent eBay "
-                     f"sold listings (range ${ebay_recent.low_usd:.2f}-"
-                     f"${ebay_recent.high_usd:.2f}, median "
-                     f"${ebay_recent.median_usd:.2f}, "
-                     f"{ebay_recent.period_days}-day window)."),
-            "ebay_sold_url": ebay_recent.sold_url,
-            "ebay_sales": ebay_recent.sales,
-            "ebay_median_usd": ebay_recent.median_usd,
-            "ebay_sample_size": ebay_recent.sample_size,
-        }
-
-    # ----- GRADED path: PriceCharting --------------------------------------
+    # ----- GRADED path ---------------------------------------------------------
     if req.is_graded and req.grade_company and req.grade is not None:
         if not req.name:
             raise HTTPException(400, "card name required for graded lookup")
+
+        # 1. PriceCharting graded (primary — has grader-specific rows)
         try:
             pc = await pricecharting_lookup.lookup_graded_price(
                 req.name, req.set_name or "", req.card_number or "",
@@ -1127,7 +1079,7 @@ async def refresh_price(req: RefreshPriceRequest):
                 variant=req.variant,
             )
         except Exception as e:
-            log.warning("PriceCharting lookup error: %s", e)
+            log.warning("PriceCharting graded lookup error: %s", e)
             pc = None
 
         if pc and pc.price_usd is not None:
@@ -1143,9 +1095,8 @@ async def refresh_price(req: RefreshPriceRequest):
                          f"sub-10 grades."),
                 "pricecharting_url": pc.url,
             }
-        # PC didn't have it. For JP graded cards try eBay Browse API with
-        # grade qualifier in the query (e.g. "PSA 10 Umbreon ex 217 Japanese")
-        # so we get graded-specific active listing prices directly.
+
+        # 2. JP Browse with grade qualifier in query
         if req.language.lower() == "japanese":
             try:
                 import ebay_browse_api
@@ -1176,39 +1127,92 @@ async def refresh_price(req: RefreshPriceRequest):
                     ),
                 }
 
-    # ----- baseline + PriceCharting sold-comp blend (raw or graded-fallback) -
-    result = await raw_price_resolver.resolve_raw_price(
-        req.name, req.set_name or "", req.card_number or "",
-        language=req.language, variant=req.variant,
-    )
-    nm_price = result.nm_price
-    baseline_label = result.baseline_label
-    extra_note = result.extra_note
+        # 3. eBay HTML recent-mean fallback for graded (>= 3 samples required)
+        ebay_recent = None
+        if req.name:
+            try:
+                ebay_recent = await ebay_lookup.lookup_recent_n_mean(
+                    name=req.name,
+                    set_name=req.set_name or "",
+                    card_number=req.card_number or "",
+                    language=req.language,
+                    condition="NM",
+                    is_graded=True,
+                    grade_company=req.grade_company,
+                    grade=req.grade,
+                    variant=req.variant,
+                    n=5,
+                    period_days=90,
+                )
+            except Exception as e:
+                log.warning("eBay recent-N-mean graded lookup failed: %s", e)
+        if ebay_recent and ebay_recent.sample_size >= 3:
+            cache_tag = "cached" if ebay_recent.cached else "live"
+            grade_tag = f"{req.grade_company} {req.grade} · "
+            return {
+                "estimated_price": ebay_recent.mean_usd,
+                "nm_baseline_usd": None,
+                "multiplier": None,
+                "source": (f"eBay sold mean · {grade_tag}n={ebay_recent.sample_size} "
+                           f"of last {ebay_recent.requested_n} ({cache_tag})"),
+                "note": (f"Mean of the {ebay_recent.sample_size} most-recent eBay "
+                         f"sold listings (range ${ebay_recent.low_usd:.2f}-"
+                         f"${ebay_recent.high_usd:.2f}, median "
+                         f"${ebay_recent.median_usd:.2f}, "
+                         f"{ebay_recent.period_days}-day window)."),
+                "ebay_sold_url": ebay_recent.sold_url,
+                "ebay_sales": ebay_recent.sales,
+                "ebay_median_usd": ebay_recent.median_usd,
+                "ebay_sample_size": ebay_recent.sample_size,
+            }
 
-    if nm_price is None:
-        raise HTTPException(404, "no baseline market price found in any catalogue")
-
-    if req.is_graded and req.grade_company and req.grade is not None:
+        # 4. NM baseline × grader multiplier (last resort)
+        result = await raw_price_resolver.resolve_raw_price(
+            req.name, req.set_name or "", req.card_number or "",
+            language=req.language, variant=req.variant,
+        )
+        nm_price = result.nm_price
+        if nm_price is None:
+            raise HTTPException(404, "no baseline market price found in any catalogue")
         mult = _pick_multiplier(req.grade_company, req.grade, req.set_name, req.variant)
         if mult is None:
             raise HTTPException(400,
                 f"unsupported grade {req.grade_company} {req.grade}. "
                 f"Try a standard grade like PSA 10, CGC 9, BGS 9.5.")
         era_tag = "vintage" if _is_vintage_card(req.set_name, req.variant) else "modern"
-        source = (f"{req.grade_company} {req.grade} estimate ({mult:.2f}× NM "
-                  f"${nm_price:.2f} from {baseline_label}, {era_tag} multiplier) — "
-                  f"PriceCharting had no entry for this card")
-    else:
-        mult = RAW_CONDITION_MULTIPLIERS.get(req.condition.upper(), 1.0)
-        source = f"{req.condition} estimate ({mult:.2f}× NM ${nm_price:.2f} from {baseline_label})"
+        estimated = round(nm_price * mult, 2)
+        return {
+            "estimated_price": estimated,
+            "nm_baseline_usd": nm_price,
+            "multiplier": mult,
+            "source": (f"{req.grade_company} {req.grade} estimate ({mult:.2f}× NM "
+                       f"${nm_price:.2f} from {result.baseline_label}, {era_tag} multiplier) — "
+                       f"PriceCharting had no entry for this card"),
+            "note": result.extra_note,
+        }
 
+    # ----- RAW path ------------------------------------------------------------
+    # PriceCharting sold anchor + eBay Browse trend blend (see raw_price_resolver).
+    # The eBay HTML scraper is not used here — it's unreliable (anti-bot 403),
+    # thin (n=5), and the resolver already incorporates eBay signals via Browse API.
+    result = await raw_price_resolver.resolve_raw_price(
+        req.name, req.set_name or "", req.card_number or "",
+        language=req.language, variant=req.variant,
+    )
+    nm_price = result.nm_price
+    if nm_price is None:
+        raise HTTPException(404, "no baseline market price found in any catalogue")
+
+    condition = (req.condition or "NM").upper()
+    mult = RAW_CONDITION_MULTIPLIERS.get(condition, 1.0)
     estimated = round(nm_price * mult, 2)
-    note = extra_note
+    source = f"{condition} · {result.baseline_label}"
+    if mult != 1.0:
+        source += f" (×{mult:.2f} condition)"
+    note = result.extra_note
     if note is None:
-        if baseline_label.startswith("Cardmarket"):
+        if result.baseline_label.startswith("Cardmarket"):
             note = "JP price from Cardmarket EUR, converted at ~1.10 USD/EUR."
-        elif baseline_label.startswith("PriceCharting Ungraded"):
-            note = "JP raw price from PriceCharting Ungraded — compiles real sold listings."
     return {
         "estimated_price": estimated,
         "nm_baseline_usd": nm_price,

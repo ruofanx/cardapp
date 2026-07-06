@@ -113,6 +113,33 @@ _CONDITION_KEYWORDS = {
     "DMG": '(DMG,Damaged,Poor)',
 }
 
+# Pre-compiled condition-detection regexes used by is_relevant_title.
+_COND_LP_RE  = re.compile(r'\bLP\b|\bLightly\s+Played\b|\bLight\s+Play\b', re.IGNORECASE)
+_COND_MP_RE  = re.compile(r'\bMP\b|\bModerately\s+Played\b|\bModerate\s+Play\b', re.IGNORECASE)
+_COND_HP_RE  = re.compile(r'\bHeavily\s+Played\b|\bHeavy\s+Play\b', re.IGNORECASE)
+_COND_DMG_RE = re.compile(r'\bDMG\b|\bDamaged\b|\bPoor\b', re.IGNORECASE)
+_COND_NM_RE  = re.compile(r'\bNM\b|\bNear[\s\-]Mint\b', re.IGNORECASE)
+
+
+def _title_hp_is_condition(title: str) -> bool:
+    """Return True if a standalone 'HP' token in the title means Heavily Played.
+
+    Pokémon card titles routinely include the card's HP stat as a number
+    ("Dragonite 100 HP"), so we skip any 'HP' that is immediately preceded
+    by a digit.  'HP' at the end of a title or after a word is condition.
+    Examples:
+      "WoTC HP"               → condition  (prefix ends with letter 'C')
+      "...English 1999 WoTC HP" → condition
+      "...Holo Unlimited 100 HP" → stat     (prefix ends with digit '0')
+    """
+    if _COND_HP_RE.search(title):
+        return True
+    for m in re.finditer(r'\bHP\b', title, re.IGNORECASE):
+        prefix = title[max(0, m.start() - 5):m.start()].rstrip()
+        if not prefix or not prefix[-1].isdigit():
+            return True
+    return False
+
 
 def build_ebay_query_string(query: CardQuery) -> str:
     parts = list(query.card.search_terms())
@@ -380,6 +407,33 @@ def is_relevant_title(title: str, query: CardQuery) -> bool:
             return False
         if query.grade and not re.search(rf"\b{re.escape(str(query.grade))}\b", t):
             return False
+
+    # Condition filter — only applied to raw (ungraded) queries.
+    # NM: reject titles that explicitly mention a lower condition.
+    # LP/MP/HP/DMG: require the matching condition keyword to be present.
+    # Titles with no condition keyword at all are treated as NM-or-better.
+    if not query.is_graded and query.condition:
+        cond = query.condition.upper()
+        has_lp  = bool(_COND_LP_RE.search(title))
+        has_mp  = bool(_COND_MP_RE.search(title))
+        has_dmg = bool(_COND_DMG_RE.search(title))
+        has_hp  = _title_hp_is_condition(title)
+        if cond == "NM":
+            if has_lp or has_mp or has_hp or has_dmg:
+                return False
+        elif cond == "LP":
+            if not has_lp:
+                return False
+        elif cond == "MP":
+            if not has_mp:
+                return False
+        elif cond == "HP":
+            if not has_hp:
+                return False
+        elif cond == "DMG":
+            if not has_dmg:
+                return False
+
     return True
 
 
