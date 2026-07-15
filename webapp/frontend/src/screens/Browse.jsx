@@ -438,6 +438,18 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
                       <ProductTypeBadge type={c.product_type} />
                     </div>
                   )}
+                  {!c.is_graded && c.condition && c.condition !== 'NM' && (() => {
+                    const condColor = { LP: '#4ea4f5', MP: '#f5a623', HP: '#e06050', DMG: '#a060d0' }[c.condition];
+                    return condColor ? (
+                      <div style={{
+                        position: 'absolute', bottom: 4, right: 4,
+                        background: condColor, borderRadius: 999,
+                        fontSize: 7, fontWeight: 800, padding: '2px 5px',
+                        color: '#fff', letterSpacing: '0.03em',
+                        boxShadow: '0 1px 3px oklch(0 0 0 / 0.4)',
+                      }}>{c.condition}</div>
+                    ) : null;
+                  })()}
                 </div>
                 {c.is_graded && c.grader && c.grade != null && (
                   <GradingBadge grader={c.grader} grade={c.grade} />
