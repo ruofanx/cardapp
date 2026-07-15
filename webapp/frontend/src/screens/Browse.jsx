@@ -176,6 +176,15 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
     if (filter === 'graded')     list = list.filter(c => c.grade);
     if (filter === 'sealed')     list = list.filter(c => api.isSealedProduct?.(c));
     if (filter === 'unpriced')   list = list.filter(c => !c.usd);
+    if (filter === 'dupes') {
+      const dupKeys = new Set(
+        Object.entries(copyCount).filter(([, n]) => n > 1).map(([k]) => k)
+      );
+      list = list.filter(c => {
+        const key = `${(c.name || '').toLowerCase()}|${c.set || ''}|${c.code || ''}`;
+        return dupKeys.has(key);
+      });
+    }
     // Tag filter — card must have ALL selected tags (case-insensitive).
     if (selectedTags.size > 0) {
       list = list.filter(c => {
@@ -257,6 +266,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
           { id: 'jp', label: 'JP' },
           { id: 'graded', label: 'Graded' },
           { id: 'unpriced', label: 'Unpriced' },
+          { id: 'dupes', label: 'Dupes' },
           { id: 'wishlist', label: 'Wishlist', count: wishlistCount },
         ].map(f => (
           <button key={f.id} className="tap" onClick={() => setFilter(f.id)} style={{
