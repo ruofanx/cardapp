@@ -39,7 +39,7 @@ function GradingBadge({ grader, grade }) {
 
 // Backend returns tags as objects like {id, name, color, ...}; older mock data
 // has plain strings. Normalize to a name list per card.
-function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCard, backend, params }) {
+function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCard, refreshPrice, backend, params }) {
   const cur = tweaks.currency;
   const [view, setView] = useState('grid');
   const [sort, setSort] = useState('value');
@@ -54,6 +54,13 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
   const [setTotals, setSetTotals] = useState({});
   const [setIds, setSetIds] = useState({});       // normName -> TCGdex set id
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [refreshingId, setRefreshingId] = useState(null);
+
+  const handleRefreshPrice = async (c) => {
+    if (!refreshPrice || refreshingId) return;
+    setRefreshingId(c.id);
+    try { await refreshPrice(c); } catch {} finally { setRefreshingId(null); }
+  };
   const [completionSheet, setCompletionSheet] = useState(null); // { setName, setId, owned }
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -155,9 +162,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
     if (query) {
       const q = query.toLowerCase();
       list = list.filter(c =>
-        (c.name || '').toLowerCase().includes(q) ||
-        (c.set  || '').toLowerCase().includes(q) ||
-        (c.code || '').toLowerCase().includes(q) ||
+        (c.name    || '').toLowerCase().includes(q) ||
+        (c.set     || '').toLowerCase().includes(q) ||
+        (c.code    || '').toLowerCase().includes(q) ||
+        (c.notes   || '').toLowerCase().includes(q) ||
+        (c.variant || '').toLowerCase().includes(q) ||
         tagNamesOf(c).some(t => t.toLowerCase().includes(q))
       );
     }
@@ -492,6 +501,18 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
                       fontSize: 11, fontWeight: 700,
                     }}>
                     {confirmDeleteId === c.id ? 'Del?' : <Icon name="trash" size={14}/>}
+                  </button>
+                )}
+                {!selectMode && refreshPrice && (
+                  <button
+                    className="tap"
+                    onClick={() => handleRefreshPrice(c)}
+                    style={{
+                      padding: '6px 8px', borderRadius: 8, flexShrink: 0,
+                      color: refreshingId === c.id ? 'var(--accent)' : 'var(--ink-3)',
+                      opacity: refreshingId && refreshingId !== c.id ? 0.4 : 1,
+                    }}>
+                    <Icon name="refresh" size={14}/>
                   </button>
                 )}
               </div>
