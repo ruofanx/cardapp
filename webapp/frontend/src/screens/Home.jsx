@@ -639,24 +639,35 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
         <Section title="Watchlist">
           <div className="col" style={{ padding: '0 16px', gap: 0 }}>
             {watchlist.map((c, i) => (
-              <button key={c.id} className="tap" onClick={() => navigate('detail', { card: c })} style={{
-                display: 'grid', gridTemplateColumns: 'auto 1fr 70px auto', gap: 12, alignItems: 'center',
+              <div key={c.id} style={{
+                display: 'grid', gridTemplateColumns: 'auto 1fr 70px auto auto', gap: 12, alignItems: 'center',
                 padding: '12px 0', textAlign: 'left',
                 borderTop: i === 0 ? 'none' : '1px solid var(--hairline-soft)',
               }}>
-                <CardArt card={c} renderMode={tweaks.cardRender} size="sm" flat/>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
-                  <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{c.code} · {c.set}</div>
-                </div>
-                <Sparkline data={cardHistories[c.id]?.length > 1 ? cardHistories[c.id] : [c.usd, c.usd]} w={70} h={28} stroke={1.4} color={c.change >= 0 ? 'var(--pos)' : 'var(--neg)'}/>
-                <div style={{ textAlign: 'right' }}>
-                  <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
-                  <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
-                    {c.change >= 0 ? '+' : ''}{(c.change).toFixed(1)}%
+                <button className="tap" onClick={() => navigate('detail', { card: c })} style={{ display: 'contents' }}>
+                  <CardArt card={c} renderMode={tweaks.cardRender} size="sm" flat/>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500 }}>{c.name}</div>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>{c.code} · {c.set}</div>
                   </div>
-                </div>
-              </button>
+                  <Sparkline data={cardHistories[c.id]?.length > 1 ? cardHistories[c.id] : [c.usd, c.usd]} w={70} h={28} stroke={1.4} color={(c.change || 0) >= 0 ? 'var(--pos)' : 'var(--neg)'}/>
+                  <div style={{ textAlign: 'right' }}>
+                    <Price usd={c.usd} currency={cur === 'BOTH' ? 'USD' : cur} size="sm"/>
+                    {c.change != null && (
+                      <div className={`mono ${c.change >= 0 ? 'delta-pos' : 'delta-neg'}`} style={{ fontSize: 11 }}>
+                        {c.change >= 0 ? '+' : ''}{c.change.toFixed(1)}%
+                      </div>
+                    )}
+                  </div>
+                </button>
+                {refreshPrice && (
+                  <button className="tap" onClick={async () => {
+                    try { await refreshPrice(c); } catch {}
+                  }} style={{ padding: '6px 4px', color: 'var(--ink-3)', flexShrink: 0 }}>
+                    <Icon name="refresh" size={14}/>
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </Section>
