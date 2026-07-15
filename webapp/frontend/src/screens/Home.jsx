@@ -153,6 +153,44 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   // Wishlist preview — top 6 by market value so the most valuable targets are front-and-center.
   const wishlistPreview = [...wishlistCards].sort((a, b) => (b.usd || 0) - (a.usd || 0)).slice(0, 6);
 
+  // Near-completion sets — fetch TCGdex totals once, then show sets ≥60% owned
+  const [setTotals, setSetTotals] = useState({});
+  useEffect(() => {
+    fetch('https://api.tcgdex.net/v2/en/sets')
+      .then(r => r.json())
+      .then(sets => {
+        const totals = {};
+        sets.forEach(s => {
+          const name = (s.name || '').toLowerCase();
+          totals[name] = s.cardCount?.official || s.cardCount?.total || 0;
+        });
+        setSetTotals(totals);
+      })
+      .catch(() => {});
+  }, []);
+
+  const nearCompletion = useMemo(() => {
+    if (!Object.keys(setTotals).length) return [];
+    const bySet = {};
+    ownedCards.forEach(c => {
+      const k = (c.set || '').toLowerCase();
+      if (!bySet[k]) bySet[k] = { displayName: c.set, cards: [] };
+      bySet[k].cards.push(c);
+    });
+    return Object.values(bySet)
+      .map(({ displayName, cards }) => {
+        const total = setTotals[displayName.toLowerCase()] || 0;
+        if (!total) return null;
+        const owned = cards.length;
+        const pct = owned / total * 100;
+        return { setName: displayName, owned, total, pct };
+      })
+      .filter(Boolean)
+      .filter(s => s.pct >= 60 && s.pct < 100)
+      .sort((a, b) => b.pct - a.pct)
+      .slice(0, 5);
+  }, [ownedCards, setTotals]);
+
   // ---- Search ----
   const q = searchQ.trim().toLowerCase();
   const searchResults = q
@@ -503,6 +541,48 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
             ))}
           </div>
         </Section>
+
+        {/* Near Completion — sets where the user owns ≥60% of cards */}
+        {nearCompletion.length > 0 && (
+          <Section
+            title="Near completion"
+            right={<button className="tap" onClick={() => navigate('browse', { view: 'set' })} style={{ color: 'var(--ink-3)', fontSize: 13 }}>Sets</button>}
+          >
+            <div className="col" style={{ padding: '0 16px', gap: 0 }}>
+              {nearCompletion.map((s, i) => (
+                <button
+                  key={s.setName}
+                  className="tap"
+                  onClick={() => navigate('browse', { setFilter: s.setName })}
+                  style={{
+                    display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'center',
+                    padding: '12px 0', textAlign: 'left',
+                    borderTop: i === 0 ? 'none' : '1px solid var(--hairline-soft)',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 6 }}>{s.setName}</div>
+                    <div style={{ position: 'relative', height: 4, borderRadius: 2, background: 'var(--hairline)', overflow: 'hidden' }}>
+                      <div style={{
+                        position: 'absolute', inset: '0 auto 0 0',
+                        width: `${s.pct}%`, borderRadius: 2,
+                        background: s.pct >= 90 ? 'var(--pos)' : 'var(--accent)',
+                      }}/>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: s.pct >= 90 ? 'var(--pos)' : 'var(--ink)' }}>
+                      {Math.round(s.pct)}%
+                    </div>
+                    <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+                      {s.owned}/{s.total}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </Section>
+        )}
 
         {/* Wishlist — cards tagged "wishlist". Hidden when empty so the home
             screen doesn't grow a permanent dead section. "See all" deep-links
