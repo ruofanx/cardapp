@@ -658,6 +658,20 @@ def delete_card(card_id: int, account: dict = Depends(get_current_account)):
     return {"deleted": True, "card_id": card_id}
 
 
+class BulkDeleteBody(BaseModel):
+    card_ids: list[int]
+
+
+@app.post("/api/cards/bulk-delete")
+def bulk_delete_cards(body: BulkDeleteBody, account: dict = Depends(get_current_account)):
+    """Delete multiple cards in a single request."""
+    deleted = []
+    for card_id in body.card_ids:
+        if db.delete_card(card_id):
+            deleted.append(card_id)
+    return {"deleted": deleted, "count": len(deleted)}
+
+
 @app.post("/api/cards/{card_id}/photo")
 async def upload_card_photo(card_id: int, photo: UploadFile = File(...), account: dict = Depends(get_current_account)):
     """Save a user-uploaded photo of this physical card. Stored under

@@ -75,11 +75,20 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
   const handleBulkDelete = async () => {
     if (!removeCard || selectedIds.size === 0 || bulkDeleting) return;
     setBulkDeleting(true);
-    for (const id of selectedIds) {
-      try { await removeCard(id); } catch {}
+    const ids = [...selectedIds];
+    try {
+      if (api.bulkDeleteCards) {
+        await api.bulkDeleteCards(ids);
+        if (reloadCollection) reloadCollection();
+      } else {
+        for (const id of ids) {
+          try { await removeCard(id); } catch {}
+        }
+      }
+    } finally {
+      setBulkDeleting(false);
+      exitSelectMode();
     }
-    setBulkDeleting(false);
-    exitSelectMode();
   };
 
   useEffect(() => {

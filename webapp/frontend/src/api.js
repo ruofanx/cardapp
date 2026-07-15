@@ -333,6 +333,15 @@ export const api = {
     return true
   },
 
+  async bulkDeleteCards(cardIds) {
+    const data = await request('/api/cards/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ card_ids: cardIds }),
+    })
+    return data?.deleted || []
+  },
+
   async searchCards(query) {
     if (!query) return []
     try {
