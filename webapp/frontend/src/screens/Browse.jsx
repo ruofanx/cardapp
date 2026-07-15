@@ -200,6 +200,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
     // so no re-sort needed — just use list as-is (undoes any prior sorts).
     if (sort === 'az')       list = [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     if (sort === 'change')   list = [...list].sort((a, b) => Math.abs(b.change || 0) - Math.abs(a.change || 0));
+    if (sort === 'paid')     list = [...list].filter(c => c.purchase_price != null).sort((a, b) => (b.purchase_price || 0) - (a.purchase_price || 0));
     return list;
   }, [query, sort, filter, selectedTags, collection]);
 
@@ -345,10 +346,10 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
           )}
           {!selectMode && (
             <button className="tap row gap-1" onClick={() => {
-              const cycle = { value: 'recent', recent: 'az', az: 'change', change: 'value' };
+              const cycle = { value: 'recent', recent: 'az', az: 'change', change: 'paid', paid: 'value' };
               setSort(s => cycle[s] || 'value');
             }} style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-              {sort === 'value' ? 'Sort: Value' : sort === 'recent' ? 'Sort: Recent' : sort === 'az' ? 'Sort: A–Z' : 'Sort: Change'} <Icon name="chevron-down" size={14}/>
+              {sort === 'value' ? 'Sort: Value' : sort === 'recent' ? 'Sort: Recent' : sort === 'az' ? 'Sort: A–Z' : sort === 'change' ? 'Sort: Change' : 'Sort: Paid'} <Icon name="chevron-down" size={14}/>
             </button>
           )}
           {selectMode && (
