@@ -72,6 +72,17 @@ export default function InsightsScreen({ goBack, collection = [], tweaks }) {
           </Section>
         )}
 
+        {/* Grader breakdown */}
+        {stats.graderBreakdown.length > 1 && (
+          <Section title="By grader">
+            <div style={{ padding: '0 16px' }}>
+              {stats.graderBreakdown.map(g => (
+                <BarRow key={g.grader} label={g.grader} value={g.value} max={stats.graderBreakdown[0].value} count={g.count} cur={cur} />
+              ))}
+            </div>
+          </Section>
+        )}
+
         {/* Top 5 */}
         <Section title="Top cards by value">
           <div style={{ padding: '0 16px' }}>
@@ -211,6 +222,16 @@ function compute(cards) {
   const rawValue = rawCards.reduce((s, c) => s + (c.usd || 0), 0)
   const gradedValue = gradedCards.reduce((s, c) => s + (c.usd || 0), 0)
 
+  // Grader breakdown
+  const graderMap = {}
+  for (const c of gradedCards) {
+    const key = (c.grader || 'Unknown').toUpperCase()
+    if (!graderMap[key]) graderMap[key] = { grader: key, count: 0, value: 0 }
+    graderMap[key].count++
+    graderMap[key].value += c.usd || 0
+  }
+  const graderBreakdown = Object.values(graderMap).sort((a, b) => b.value - a.value)
+
   // Top 5 by value
   const top5 = [...cards].filter(c => c.usd > 0).sort((a, b) => (b.usd || 0) - (a.usd || 0)).slice(0, 5)
 
@@ -239,6 +260,7 @@ function compute(cards) {
     sets,
     conditions,
     hasJP, enCount: enCards.length, jpCount: jpCards.length, enValue, jpValue,
+    graderBreakdown,
     rawCount: rawCards.length, gradedCount: gradedCards.length, rawValue, gradedValue,
     top5, topGainers, topLosers,
     monthBuckets,
