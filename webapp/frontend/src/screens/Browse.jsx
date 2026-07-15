@@ -43,7 +43,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
   const cur = tweaks.currency;
   const [view, setView] = useState('grid');
   const [sort, setSort] = useState('value');
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => params?.setFilter || '');
   // Allow navigate('browse', {filter:'wishlist'}) to deep-link into a chip
   // selection — Home's Wishlist section uses this.
   const [filter, setFilter] = useState(() => params?.filter || 'all');
@@ -367,7 +367,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
           </div>
         )}
         {view === 'grid' && items.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, padding: '8px 12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8, padding: '8px 12px' }}>
             {items.map(c => {
               const dupeKey = `${(c.name || '').toLowerCase()}|${c.set || ''}|${c.code || ''}`;
               const dupeCount = copyCount[dupeKey] || 1;
@@ -468,6 +468,11 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
                     {c.is_graded && c.grader && c.grade != null && (
                       <div style={{ marginTop: 3 }}>
                         <GradingBadge grader={c.grader} grade={c.grade} />
+                      </div>
+                    )}
+                    {c.notes && (
+                      <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.notes}
                       </div>
                     )}
                   </div>
