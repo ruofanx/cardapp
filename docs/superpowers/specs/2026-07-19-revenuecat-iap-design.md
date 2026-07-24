@@ -1,16 +1,17 @@
 # RevenueCat IAP — Design
 
-**Date:** 2026-07-19
+**Date:** 2026-07-19 (revised 2026-07-24)
 **Status:** Approved
 **Parent:** [2026-06-27-pokecollect-mobile-launch-design.md](2026-06-27-pokecollect-mobile-launch-design.md) — this fills in step 5 of the Launch Sequence ("RevenueCat integration (IAP + subscription)").
 **Goal:** Make the existing "Upgrade to Family/Pro" paywall actually work. Today it's UI-only — tapping Upgrade just navigates to Settings, and nothing ever sets `accounts.plan = 'pro'`. This spec wires a real Apple in-app purchase through RevenueCat, ending at `accounts.plan` flipping automatically.
 
 ---
 
-## 1. Current state (confirmed against code, 2026-07-15)
+## 1. Current state (confirmed against code, 2026-07-24)
 
-- `accounts` table already has `plan TEXT DEFAULT 'free'` and `trial_ends_at TIMESTAMPTZ` (`db_postgres.py`). `trial_ends_at` is defined but never written anywhere — dead column today.
-- `is_pro` (`plan == 'pro' or trial_ends_at > now`) is computed inline in three places in `app.py` (`/api/account`, the profile-limit gate, `/api/identify`).
+- `accounts` table already has `plan TEXT DEFAULT 'free'` and `trial_ends_at TIMESTAMPTZ` (`db_postgres.py`).
+- **Correction from the 2026-07-19 pass:** `trial_ends_at` is *not* dead. `create_account()` (`db_postgres.py:597-613`, added in `ccb97a2`) already sets it to `now + 14 days` unconditionally on every signup — every new account gets a 14-day app-granted trial with no purchase involved. **Decision: keep this alongside the new StoreKit trial** (see §3.1) rather than removing it — new users get a no-payment-method grace period, and Apple's own intro-offer trial covers the actual subscription later. This means a user can legitimately get up to 28 free days total (14 at signup + 14 more if they subscribe before or shortly after the signup trial lapses and are still StoreKit-eligible) — accepted as intentional generosity, not a bug.
+- `is_pro` (`plan == 'pro' or trial_ends_at > now`) is computed inline in three places in `app.py` (`/api/account`, the profile-limit gate, `/api/identify`) — **but inconsistently**: the profile-limit gate (`app.py:275`) checks `account.get("plan") == "pro"` directly and ignores `trial_ends_at`, so a brand-new account in its signup trial currently gets unlimited scans but is *still capped at 1 profile*. Unifying onto one helper (§3) fixes this as a side effect.
 - Paywall gates that exist and work: `POST /api/profiles` → `402` past `FREE_PROFILE_LIMIT = 1`; `POST /api/identify` → `429 scan_limit_reached` past the monthly scan limit.
 - Paywall UI: `PaywallSheet` is defined inline in `webapp/frontend/src/screens/AddProfile.jsx`, shown only when the 402 is caught. Its "Upgrade · $3.99/mo · 14-day free trial" button calls `onUpgrade` → `navigate('settings')`. No purchase happens.
 - Settings (`SettingsAndOnboarding.jsx`) already renders a Plan card ("Free" / "Pro" / "Pro Trial" with days-left) reading `account.is_pro` / `account.trial_ends_at` — but its "Upgrade" pill has no `onClick`.
@@ -51,8 +52,13 @@ Identity: RevenueCat's `app_user_id` is set to our own Supabase account UUID at 
 
 ## 3. Backend changes
 
-### `webapp/app.py`
-- `account_is_pro(account: dict) -> bool` — extracts the `plan=='pro' or trial_ends_at>now` check currently duplicated in three places into one helper; all three call sites switch to use it.
+### 3.1 Trial model (both trials coexist)
+Two independent things can make `account_is_pro()` true, and both write the same `trial_ends_at` column:
+1. **Signup trial** — `create_account()` already sets `trial_ends_at = now + 14 days` at account creation. Unchanged by this spec.
+2. **StoreKit subscription trial** — the webhook (§3.3) sets `trial_ends_at` to the subscription's own trial expiration when `period_type == 'TRIAL'`, which **overwrites** whatever was there before (including a still-active or already-expired signup trial). That's correct: the column always means "when does the current pro grace period end, whichever kind it is."
+
+### 3.2 `webapp/app.py`
+- `account_is_pro(account: dict) -> bool` — extracts the `plan=='pro' or trial_ends_at>now` check currently duplicated in three places into one helper; all three call sites switch to use it, **including the profile-limit gate at `app.py:275`**, which fixes the trial-blindness bug noted in §1.
 - `POST /api/webhooks/revenuecat` (no `get_current_account` dependency — this is server-to-server, authenticated by shared secret instead):
   - Reject with `401` if the `Authorization` header doesn't match `REVENUECAT_WEBHOOK_SECRET`.
   - Reject with `400` if the payload doesn't parse into the expected shape.
@@ -60,7 +66,7 @@ Identity: RevenueCat's `app_user_id` is set to our own Supabase account UUID at 
   - Apply the state transition below, `UPDATE accounts SET plan=..., trial_ends_at=...`. On DB failure, return `500` so RevenueCat retries — we want eventual consistency, not a dropped update.
   - Otherwise return `200`.
 
-### State transition (from the webhook event's `type`, `entitlement_ids`, `period_type`, `expiration_at_ms` — no extra RevenueCat API call needed, since we only ever have one entitlement/product)
+### 3.3 State transition (from the webhook event's `type`, `entitlement_ids`, `period_type`, `expiration_at_ms` — no extra RevenueCat API call needed, since we only ever have one entitlement/product)
 
 | Event type | Effect |
 |---|---|
@@ -72,10 +78,10 @@ Identity: RevenueCat's `app_user_id` is set to our own Supabase account UUID at 
 
 Every branch is idempotent — safe for RevenueCat's retry-on-non-2xx behavior.
 
-### One-time (not a persisted script)
+### 3.4 One-time (not a persisted script)
 - Grandfather Ro/Reid/Ryan's existing accounts: `UPDATE accounts SET plan='pro' WHERE id IN (...)` run once by hand during implementation, so shipping the paywall doesn't interrupt the family's own usage.
 
-### Env vars (`.env`, and Railway)
+### 3.5 Env vars (`.env`, and Railway)
 - `REVENUECAT_WEBHOOK_SECRET` — shared secret RevenueCat sends back in the webhook's `Authorization` header.
 
 ---
@@ -90,6 +96,7 @@ Every branch is idempotent — safe for RevenueCat's retry-on-non-2xx behavior.
   2. Settings "Upgrade" pill — currently has no `onClick`; wire it to open the sheet.
   3. Scan's `429 scan_limit_reached` — currently has zero UI reaction; add a minimal catch that opens the same sheet. (Small, closely related fix — the whole point of the paywall is to convert this exact moment.)
 - Real purchase button: fetch the RevenueCat offering's package, call `purchasePackage`. On success, treat the returned `CustomerInfo` as authoritative for the client's own immediate UI (show "Pro" right away) — the webhook independently keeps the server's `accounts.plan` in sync for server-side gates (`/api/profiles`, `/api/identify`). On cancel, close silently. On error, inline message + retry. On "pending" (Ask to Buy / Family Sharing approval), show a waiting state and don't grant access until a real entitlement appears.
+- **Trial-copy accuracy (new, from the "keep both trials" decision):** Apple decides per-Apple-ID whether a StoreKit intro offer trial applies — we can't just hardcode "14-day free trial" in the paywall copy regardless of the signup trial's state. `PaywallSheet` calls RevenueCat's `checkTrialOrIntroDiscountEligibility()` for the package and renders "14-day free trial · then $3.99/mo" only when eligible; otherwise "$3.99/mo · Cancel anytime" with no trial line.
 - Settings: add a "Restore Purchases" action (Apple requires this for any app selling subscriptions) calling `restorePurchases()`.
 
 ---
