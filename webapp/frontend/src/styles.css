@@ -83,7 +83,7 @@ body {
 
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; outline: none; }
 button:focus { outline: none; }
-input, select, textarea { font: inherit; color: inherit; }
+input, select, textarea { font: inherit; color: inherit; font-size: max(16px, 1em); }
 
 .mono { font-family: var(--mono); font-feature-settings: "tnum"; letter-spacing: 0; }
 .tnum { font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
