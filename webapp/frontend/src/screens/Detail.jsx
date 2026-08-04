@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react'
 import api from '../api.js'
 import { CARDS } from '../data.js'
-import { CardArt, Icon, Price, NavBar, NavBackButton, ProductTypeBadge, fmtUSD, useUserPhotos, userPhotos } from '../components.jsx'
+import { CardArt, Icon, Price, NavBar, NavBackButton, ProductTypeBadge, fmtUSD, useUserPhotos, userPhotos, SegmentedControl, ConfirmSheet } from '../components.jsx'
 
 /* Card detail — price history, sold listings, EN/JP, conditions */
 
@@ -588,41 +588,15 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
         </>}
       />
 
-      {confirmingDelete && (
-        <div onClick={() => !deleting && setConfirmingDelete(false)} style={{
-          position: 'absolute', inset: 0, background: 'oklch(0 0 0 / 0.55)',
-          zIndex: 100, display: 'flex', alignItems: 'flex-end',
-          animation: 'fadeIn 0.15s ease-out',
-        }}>
-          <div onClick={e => e.stopPropagation()} style={{
-            width: '100%',
-            background: 'var(--bg-1)',
-            borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            padding: '20px 16px calc(env(safe-area-inset-bottom, 0px) + 20px)',
-            boxShadow: '0 -8px 32px oklch(0 0 0 / 0.4)',
-            animation: 'riseIn 0.2s ease-out',
-          }}>
-            <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>
-              Remove {c.name || 'this card'}?
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 16 }}>
-              This permanently removes the card from your collection. You can scan or add it again later.
-            </div>
-            <div className="col" style={{ gap: 8 }}>
-              <button className="tap" onClick={handleDelete} disabled={deleting} style={{
-                padding: '13px 16px', borderRadius: 12,
-                background: 'var(--neg)', color: '#fff',
-                fontSize: 15, fontWeight: 600, opacity: deleting ? 0.6 : 1,
-              }}>{deleting ? 'Removing…' : 'Remove card'}</button>
-              <button className="tap" onClick={() => setConfirmingDelete(false)} disabled={deleting} style={{
-                padding: '13px 16px', borderRadius: 12,
-                background: 'var(--bg-2)', color: 'var(--ink)',
-                fontSize: 15, fontWeight: 500,
-              }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmSheet
+        open={confirmingDelete}
+        title={`Remove ${c.name || 'this card'}?`}
+        message="This permanently removes the card from your collection. You can scan or add it again later."
+        confirmLabel={deleting ? 'Removing…' : 'Remove card'}
+        busy={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmingDelete(false)}
+      />
 
       {editing && (
         <div onClick={() => !savingEdit && setEditing(false)} style={{
@@ -1054,55 +1028,37 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
           {!api?.isSealedProduct(c) && (
             <>
               <div className="row gap-2" style={{ marginBottom: 8 }}>
-                <div className="row" style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-                  {['EN', 'JP'].map(L => (
-                    <button key={L} className="tap" onClick={() => setLang(L)} style={{
-                      flex: 1, padding: '7px 0', borderRadius: 8,
-                      background: lang === L ? 'var(--bg-3)' : 'transparent',
-                      color: lang === L ? 'var(--ink)' : 'var(--ink-3)',
-                      fontWeight: 600, fontSize: 13,
-                    }}>{L}</button>
-                  ))}
+                <div style={{ flex: 1 }}>
+                  <SegmentedControl
+                    options={[{ value: 'EN', label: 'EN' }, { value: 'JP', label: 'JP' }]}
+                    value={lang} onChange={setLang}
+                  />
                 </div>
-                <div className="row" style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-                  {[['raw', 'Raw'], ['graded', 'Graded']].map(([v, label]) => (
-                    <button key={v} className="tap" onClick={() => setGrading(v)} style={{
-                      flex: 1, padding: '7px 0', borderRadius: 8,
-                      background: grading === v ? 'var(--bg-3)' : 'transparent',
-                      color: grading === v ? 'var(--ink)' : 'var(--ink-3)',
-                      fontWeight: 600, fontSize: 13,
-                    }}>{label}</button>
-                  ))}
+                <div style={{ flex: 1 }}>
+                  <SegmentedControl
+                    options={[{ value: 'raw', label: 'Raw' }, { value: 'graded', label: 'Graded' }]}
+                    value={grading} onChange={setGrading}
+                  />
                 </div>
               </div>
 
               {grading === 'raw' ? (
-                <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-                  {['NM', 'LP', 'MP', 'HP', 'DMG'].map(g => (
-                    <button key={g} className="tap" onClick={() => setCondition(g)} style={{
-                      flex: 1, padding: '7px 0', borderRadius: 8,
-                      background: condition === g ? 'var(--bg-3)' : 'transparent',
-                      color: condition === g ? 'var(--ink)' : 'var(--ink-3)',
-                      fontWeight: 600, fontSize: 12,
-                    }}>{g}</button>
-                  ))}
-                </div>
+                <SegmentedControl
+                  options={['NM', 'LP', 'MP', 'HP', 'DMG'].map(g => ({ value: g, label: g }))}
+                  value={condition} onChange={setCondition} size="sm"
+                />
               ) : (
                 <div className="col" style={{ gap: 6 }}>
-                  <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-                    {Object.keys(GRADE_OPTIONS).map(g => (
-                      <button key={g} className="tap" onClick={() => {
-                        setGrader(g);
-                        // Snap grade to nearest valid value for the new grader.
-                        if (!GRADE_OPTIONS[g].includes(grade)) setGrade(GRADE_OPTIONS[g][0]);
-                      }} style={{
-                        flex: 1, padding: '7px 0', borderRadius: 8,
-                        background: grader === g ? 'var(--bg-3)' : 'transparent',
-                        color: grader === g ? 'var(--ink)' : 'var(--ink-3)',
-                        fontWeight: 600, fontSize: 12,
-                      }}>{g}</button>
-                    ))}
-                  </div>
+                  <SegmentedControl
+                    options={Object.keys(GRADE_OPTIONS).map(g => ({ value: g, label: g }))}
+                    value={grader}
+                    onChange={g => {
+                      setGrader(g);
+                      // Snap grade to nearest valid value for the new grader.
+                      if (!GRADE_OPTIONS[g].includes(grade)) setGrade(GRADE_OPTIONS[g][0]);
+                    }}
+                    size="sm"
+                  />
                   <div className="row" style={{ background: 'var(--bg-2)', borderRadius: 10, padding: 3, gap: 2, overflowX: 'auto', scrollbarWidth: 'none' }}>
                     {GRADE_OPTIONS[grader].map(n => (
                       <button key={n} className="tap" onClick={() => setGrade(n)} style={{

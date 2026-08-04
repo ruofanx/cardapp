@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from './supabase.js'
+import { ListGroup, ListRow, Button } from './components.jsx'
 
 export default function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState('')
@@ -47,46 +48,37 @@ export default function LoginScreen({ onLogin }) {
         Track your collection · Trade at shows
       </p>
 
-      <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <input
-          type="email" value={email} onChange={e => setEmail(e.target.value)}
-          placeholder="Email" required autoComplete="email"
-          style={{
-            padding: '12px 16px', borderRadius: 12,
-            border: '1px solid var(--hairline-soft)',
-            background: 'var(--bg-1)', color: 'var(--ink)',
-            fontSize: 16, outline: 'none',
-          }}
-        />
-        <input
-          type="password" value={password} onChange={e => setPassword(e.target.value)}
-          placeholder="Password" required minLength={6} autoComplete="current-password"
-          style={{
-            padding: '12px 16px', borderRadius: 12,
-            border: '1px solid var(--hairline-soft)',
-            background: 'var(--bg-1)', color: 'var(--ink)',
-            fontSize: 16, outline: 'none',
-          }}
-        />
+      <form onSubmit={handleSubmit} style={{ width: '100%', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <ListGroup>
+          <ListRow>
+            <input
+              type="email" value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="Email" required autoComplete="email"
+            />
+          </ListRow>
+          <ListRow>
+            <input
+              type="password" value={password} onChange={e => setPassword(e.target.value)}
+              placeholder="Password" required minLength={6} autoComplete="current-password"
+            />
+          </ListRow>
+        </ListGroup>
+
         {error && <p style={{ color: 'var(--neg)', fontSize: 13, margin: 0 }}>{error}</p>}
-        <button type="submit" disabled={loading}
-          style={{
-            padding: '13px', borderRadius: 12,
-            background: 'var(--accent)', color: 'var(--accent-ink)',
-            fontWeight: 700, fontSize: 16, border: 'none',
-            cursor: loading ? 'not-allowed' : 'pointer',
-            opacity: loading ? 0.6 : 1,
-          }}>
-          {loading ? 'Please wait…' : (isSignUp ? 'Create account' : 'Sign in')}
-        </button>
-        <button type="button" onClick={() => { setIsSignUp(!isSignUp); setError('') }}
-          style={{
-            background: 'none', border: 'none',
-            color: 'var(--ink-3)', fontSize: 13,
-            cursor: 'pointer', padding: '4px',
-          }}>
-          {isSignUp ? 'Already have an account? Sign in' : 'New here? Create an account'}
-        </button>
+
+        <div className="col" style={{ gap: 6 }}>
+          <Button type="submit" loading={loading}>
+            {isSignUp ? 'Create account' : 'Sign in'}
+          </Button>
+          <button type="button" onClick={() => { setIsSignUp(!isSignUp); setError('') }}
+            style={{
+              background: 'none', border: 'none',
+              color: 'var(--ink-3)', fontSize: 13,
+              cursor: 'pointer', padding: '8px 4px',
+            }}>
+            {isSignUp ? 'Already have an account? Sign in' : 'New here? Create an account'}
+          </button>
+        </div>
       </form>
     </div>
   )
