@@ -209,7 +209,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
     return (
       <div className="screen">
         <div className="screen-scroll" style={{ paddingBottom: 24 }}>
-          <div style={{ padding: '14px 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '4px 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div className="row gap-2">
               <div className="foil" style={{ width: 26, height: 26, borderRadius: 7, animation: 'foilRot 18s linear infinite' }} />
               <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '-0.01em' }}>PokeCollect</div>
@@ -230,7 +230,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
     return (
       <div className="screen">
         <div className="screen-scroll" style={{ paddingBottom: 24 }}>
-          <div style={{ padding: '14px 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '4px 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div className="row gap-2">
               <div className="foil" style={{ width: 26, height: 26, borderRadius: 7, animation: 'foilRot 18s linear infinite' }} />
               <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '-0.01em' }}>PokeCollect</div>
@@ -270,7 +270,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
     <div className="screen">
       <div className="screen-scroll" style={{ paddingBottom: 24 }}>
         {/* Status header */}
-        <div style={{ padding: '14px 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ padding: '4px 16px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="row gap-2">
             <div className="foil" style={{ width: 26, height: 26, borderRadius: 7, animation: 'foilRot 18s linear infinite' }} />
             <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '-0.01em' }}>PokeCollect</div>

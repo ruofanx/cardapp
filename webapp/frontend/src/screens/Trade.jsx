@@ -875,7 +875,7 @@ function AddTargetSheet({ identifyCard, tweaks, cur, onAdd, onClose }) {
         width: '100%', maxHeight: '85vh', display: 'flex', flexDirection: 'column',
         boxShadow: '0 -8px 32px oklch(0 0 0 / 0.25)',
       }}>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px 0', flexShrink: 0 }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', padding: '4px 16px 0', flexShrink: 0 }}>
           <span style={{ fontSize: 15, fontWeight: 700 }}>Add another card</span>
           <button className="tap" onClick={onClose} style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>
             Cancel

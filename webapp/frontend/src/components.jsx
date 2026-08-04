@@ -250,7 +250,7 @@ export const Icon = ({ name, size = 20, stroke = 1.6, ...rest }) => {
 // ── NavBar / NavBackButton ────────────────────────────────────────────────────
 export function NavBar({ title, left, right, large = false, transparent = false }) {
   return (
-    <div style={{ flexShrink: 0, padding: large ? '8px 16px 0' : '12px 16px', background: transparent ? 'transparent' : 'var(--bg)', borderBottom: transparent ? 'none' : '1px solid var(--hairline-soft)' }}>
+    <div style={{ flexShrink: 0, padding: large ? '4px 16px 0' : '6px 16px', background: transparent ? 'transparent' : 'var(--bg)', borderBottom: transparent ? 'none' : '1px solid var(--hairline-soft)' }}>
       <div className="row" style={{ minHeight: 36, justifyContent: 'space-between', gap: 8 }}>
         <div className="row gap-2" style={{ flex: 1, minWidth: 0 }}>{left}</div>
         {!large && <div style={{ fontWeight: 600, fontSize: 17 }}>{title}</div>}
