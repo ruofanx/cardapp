@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
-import { Icon, NavBar, NavBackButton, fmtPrice } from '../components.jsx'
+import { Icon, NavBar, NavBackButton, fmtPrice, Button } from '../components.jsx'
 
 const RAILWAY_URL = 'https://cardapp-production-569d.up.railway.app'
 
@@ -69,15 +69,10 @@ export default function TradeShowScreen({ goBack, currentUser, collection, navig
         </div>
 
         {/* Share link */}
-        <button className="tap row gap-2" onClick={share} style={{
-          width: '100%', padding: '13px 16px', borderRadius: 14,
-          background: 'var(--accent)', color: 'var(--accent-ink)',
-          fontWeight: 700, fontSize: 15, border: 'none', cursor: 'pointer',
-          alignItems: 'center', justifyContent: 'center',
-        }}>
+        <Button variant="filled" onClick={share} style={{ gap: 8 }}>
           <Icon name={copied ? 'check' : 'share'} size={18} />
           {copied ? 'Link copied!' : 'Share link'}
-        </button>
+        </Button>
 
         {/* Want list preview */}
         {wants.length > 0 && (
@@ -112,13 +107,9 @@ export default function TradeShowScreen({ goBack, currentUser, collection, navig
         )}
 
         {wants.length === 0 && (
-          <button className="tap" onClick={() => navigate('want-list')} style={{
-            width: '100%', padding: '13px', borderRadius: 14,
-            background: 'var(--bg-2)', color: 'var(--ink-2)',
-            fontWeight: 600, fontSize: 14, border: 'none', cursor: 'pointer',
-          }}>
+          <Button variant="plain" onClick={() => navigate('want-list')}>
             Add cards to your Want List →
-          </button>
+          </Button>
         )}
       </div>
     </div>
