@@ -317,7 +317,7 @@ function BackendBanner({ backend, onRetry }) {
       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
     }}>
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        Backend offline · {backend.error || 'unknown error'}
+        Backend offline · demo data {backend.error ? '· ' + backend.error.slice(0, 80) : ''}
       </span>
       <button className="tap" onClick={onRetry} style={{
         padding: '2px 8px', borderRadius: 6,
