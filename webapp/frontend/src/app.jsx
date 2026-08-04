@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import api, { setAuthToken, setCurrentProfileId } from './api.js'
 import { supabase } from './supabase.js'
+import { configurePurchases, logOutPurchases } from './purchases.js'
 import { userPhotos, Icon } from './components.jsx'
 import { useTweaks, TweaksPanel, TweakSection, TweakRadio, TweakSlider, TweakSelect, TweakToggle } from './tweaks-panel.jsx'
 import LoginScreen from './Login.jsx'
@@ -222,11 +223,13 @@ export default function App() {
       if (data.session) {
         setAuthToken(data.session.access_token)
         setAuthed(true)
+        configurePurchases(data.session.user.id)
       }
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setAuthToken(session?.access_token || null)
       setAuthed(!!session)
+      if (session) configurePurchases(session.user.id)
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -237,6 +240,7 @@ export default function App() {
   }
 
   async function handleSignOut() {
+    await logOutPurchases()
     await supabase.auth.signOut()
     setAuthToken(null)
     setAuthed(false)
