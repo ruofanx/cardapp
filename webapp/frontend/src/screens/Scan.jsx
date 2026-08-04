@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import api from '../api.js'
 import { CardArt, Icon, Price } from '../components.jsx'
+import PaywallSheet from '../PaywallSheet.jsx'
 
 /* Scan — real photo+search identify flow.
  * Visual style preserved from the original camera UI; pipeline log now reflects
@@ -27,6 +28,7 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
   // card search/pricing pipeline (which returns unrelated card images).
   const [scanType, setScanType] = useState('auto');
   const [scanUsage, setScanUsage] = useState(null); // { used, limit } or null
+  const [showPaywall, setShowPaywall] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -249,6 +251,11 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
       setCandidates(widened);
       setPhase('result');
     } catch (e) {
+      if (e.status === 429) {
+        setPhase('idle');
+        setShowPaywall(true);
+        return;
+      }
       log('Identify failed', String(e.message || e).slice(0, 80), 'miss');
       setError(String(e.message || e));
       setPhase('idle');
@@ -333,6 +340,22 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
     setPipelineLog([]);
     setCandidates([]);
   };
+
+  if (showPaywall) {
+    return (
+      <PaywallSheet
+        reason="scans"
+        onClose={() => setShowPaywall(false)}
+        onUpgraded={() => {
+          setShowPaywall(false);
+          api.getAccount().then(acct => {
+            if (acct?.scan_limit != null) setScanUsage({ used: acct.scan_used ?? 0, limit: acct.scan_limit });
+            else setScanUsage(null);
+          }).catch(() => {});
+        }}
+      />
+    );
+  }
 
   return (
     <div className="screen" style={{ background: '#000' }}>
