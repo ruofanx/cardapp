@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import api from '../api.js'
 import { Icon, NavBar, NavBackButton } from '../components.jsx'
+import PaywallSheet from '../PaywallSheet.jsx'
 
 const COLORS = ['#34d399', '#60a5fa', '#f472b6', '#fb923c', '#a78bfa', '#facc15', '#f87171', '#4ade80']
 
@@ -32,7 +33,7 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
   }
 
   if (showPaywall) {
-    return <PaywallSheet onClose={() => setShowPaywall(false)} onUpgrade={() => navigate('settings')} />
+    return <PaywallSheet reason="profiles" onClose={() => setShowPaywall(false)} onUpgraded={() => setShowPaywall(false)} />
   }
 
   return (
@@ -148,56 +149,6 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
             </div>
           </div>
         )}
-      </div>
-    </div>
-  )
-}
-
-function PaywallSheet({ onClose, onUpgrade }) {
-  return (
-    <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
-      <NavBar
-        title=""
-        left={<NavBackButton onClick={onClose} label="Back" />}
-      />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px 28px', gap: 0 }}>
-        <div className="foil" style={{ width: 72, height: 72, borderRadius: 20, animation: 'foilRot 18s linear infinite', marginBottom: 24 }} />
-        <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 8, textAlign: 'center' }}>
-          Upgrade to Family/Pro
-        </div>
-        <div style={{ fontSize: 15, color: 'var(--ink-3)', textAlign: 'center', lineHeight: 1.55, marginBottom: 32 }}>
-          The free plan includes 1 profile. Upgrade to add unlimited profiles for everyone in your family.
-        </div>
-
-        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-          {[
-            ['Unlimited profiles', 'Add all your kids with their own collections'],
-            ['Unlimited scans', 'No monthly limit on card identification'],
-            ['Full price history', 'Charts and trend data for every card'],
-            ['Price alerts', 'Get notified when a card hits your target'],
-          ].map(([title, desc]) => (
-            <div key={title} className="row gap-3" style={{ padding: '12px 14px', background: 'var(--bg-1)', borderRadius: 12 }}>
-              <Icon name="check" size={18} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-                <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 1 }}>{desc}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <button
-          onClick={onUpgrade}
-          style={{
-            width: '100%', padding: '15px', borderRadius: 14,
-            background: 'var(--accent)', color: 'var(--accent-ink)',
-            fontWeight: 700, fontSize: 17, border: 'none', cursor: 'pointer',
-          }}>
-          Upgrade · $3.99/mo
-        </button>
-        <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 10, textAlign: 'center' }}>
-          14-day free trial · Cancel anytime
-        </div>
       </div>
     </div>
   )
