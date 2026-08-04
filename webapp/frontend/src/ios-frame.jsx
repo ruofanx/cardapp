@@ -78,6 +78,8 @@ export function ResponsiveShell({ children, forceMode }) {
   }
   return (
     <div data-shell="fluid" style={{ position: 'fixed', inset: 0, background: 'var(--bg)', '--app-top-inset': 'env(safe-area-inset-top, 0px)' }}>
+      {/* DEBUG: red bar showing exact safe-area-inset-top height — remove after measuring */}
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 'env(safe-area-inset-top, 0px)', background: 'rgba(255,0,0,0.4)', zIndex: 9999, pointerEvents: 'none' }}/>
       {children}
     </div>
   )
