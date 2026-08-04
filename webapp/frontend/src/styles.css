@@ -1,7 +1,5 @@
 /* PokeCollect — premium TCG collector tool */
 
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
-
 :root {
   /* Dark theme (default) */
   --bg: oklch(0.16 0.01 250);
@@ -37,8 +35,8 @@
   --shadow-card: 0 1px 0 oklch(1 0 0 / 0.04) inset, 0 12px 32px -12px oklch(0 0 0 / 0.6);
   --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 18px 48px -16px oklch(0 0 0 / 0.7);
 
-  --sans: 'Geist', system-ui, -apple-system, sans-serif;
-  --mono: 'Geist Mono', ui-monospace, 'SF Mono', monospace;
+  --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Menlo', monospace;
 
   --tap: 44px;
   --page-bg: oklch(0.08 0.005 250);
@@ -77,8 +75,6 @@ body {
   background: oklch(0.08 0.005 250);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: "ss01", "cv11";
-  letter-spacing: -0.01em;
 }
 
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; outline: none; }
@@ -237,6 +233,43 @@ input, select, textarea { font: inherit; color: inherit; font-size: max(16px, 1e
 
 /* Sparklines */
 .spark { display: block; }
+
+/* Grouped list (iOS-style inset form rows) */
+.list-group {
+  background: var(--bg-1);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 11px 16px;
+}
+.list-row + .list-row { border-top: 1px solid var(--hairline-soft); }
+.list-row input, .list-row select {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.list-row input::placeholder { color: var(--ink-4); }
+
+/* Native filled button (semibold, iOS button-label weight) */
+.btn-native {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 50px;
+  border-radius: var(--radius);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.btn-native-filled { background: var(--accent); color: var(--accent-ink); }
+.btn-native-plain { background: var(--bg-2); color: var(--ink); }
+.btn-native:disabled { opacity: 0.5; }
 
 /* Tab bar (bottom) */
 .tabbar {

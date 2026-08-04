@@ -247,6 +247,93 @@ export const Icon = ({ name, size = 20, stroke = 1.6, ...rest }) => {
   }
 }
 
+// ── SegmentedControl (iOS-style sliding pill) ──────────────────────────────────
+export function SegmentedControl({ options, value, onChange, size = 'md' }) {
+  const count = options.length
+  const idx = Math.max(0, options.findIndex(o => o.value === value))
+  const fontSize = size === 'sm' ? 12 : 13
+  const pad = size === 'sm' ? '6px 4px' : '7px 4px'
+  return (
+    <div className="row" style={{ position: 'relative', background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
+      <div style={{
+        position: 'absolute', top: 3, bottom: 3,
+        left: `calc(3px + ${idx} * (100% - 6px) / ${count})`,
+        width: `calc((100% - 6px) / ${count})`,
+        background: 'var(--bg-3)', borderRadius: 8,
+        boxShadow: '0 1px 3px oklch(0 0 0 / 0.18), 0 1px 1px oklch(0 0 0 / 0.1)',
+        transition: 'left .22s cubic-bezier(0.4, 0, 0.2, 1)',
+      }} />
+      {options.map(o => (
+        <button key={o.value} className="tap" onClick={() => onChange(o.value)} style={{
+          flex: 1, position: 'relative', zIndex: 1, padding: pad, borderRadius: 8,
+          color: o.value === value ? 'var(--ink)' : 'var(--ink-3)',
+          fontWeight: 600, fontSize, whiteSpace: 'nowrap',
+        }}>{o.label}</button>
+      ))}
+    </div>
+  )
+}
+
+// ── ListGroup / ListRow (iOS-style inset grouped form) ──────────────────────────
+export function ListGroup({ children, style }) {
+  return <div className="list-group" style={style}>{children}</div>
+}
+export function ListRow({ children, style }) {
+  return <div className="list-row" style={style}>{children}</div>
+}
+
+// ── Button (native filled/plain, semibold, 50pt tap height) ─────────────────────
+export function Button({ children, onClick, type = 'button', variant = 'filled', disabled = false, loading = false, style }) {
+  return (
+    <button
+      type={type}
+      className={`tap btn-native ${variant === 'filled' ? 'btn-native-filled' : 'btn-native-plain'}`}
+      onClick={onClick}
+      disabled={disabled || loading}
+      style={style}
+    >
+      {loading ? 'Please wait…' : children}
+    </button>
+  )
+}
+
+// ── ConfirmSheet (iOS-style bottom action sheet for destructive confirmations) ──
+export function ConfirmSheet({ open, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = true, busy = false, onConfirm, onCancel }) {
+  if (!open) return null
+  return (
+    <div onClick={() => !busy && onCancel?.()} style={{
+      position: 'absolute', inset: 0, background: 'oklch(0 0 0 / 0.55)',
+      zIndex: 100, display: 'flex', alignItems: 'flex-end',
+      animation: 'fadeIn 0.15s ease-out',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%',
+        background: 'var(--bg-1)',
+        borderTopLeftRadius: 18, borderTopRightRadius: 18,
+        padding: '20px 16px calc(env(safe-area-inset-bottom, 0px) + 20px)',
+        boxShadow: '0 -8px 32px oklch(0 0 0 / 0.4)',
+        animation: 'riseIn 0.2s ease-out',
+      }}>
+        <div style={{ fontSize: 17, fontWeight: 600, marginBottom: 4 }}>{title}</div>
+        {message && <div style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 16 }}>{message}</div>}
+        <div className="col" style={{ gap: 8 }}>
+          <button className="tap" onClick={onConfirm} disabled={busy} style={{
+            padding: '13px 16px', borderRadius: 12,
+            background: destructive ? 'var(--neg)' : 'var(--accent)',
+            color: destructive ? '#fff' : 'var(--accent-ink)',
+            fontSize: 15, fontWeight: 600, opacity: busy ? 0.6 : 1,
+          }}>{confirmLabel}</button>
+          <button className="tap" onClick={onCancel} disabled={busy} style={{
+            padding: '13px 16px', borderRadius: 12,
+            background: 'var(--bg-2)', color: 'var(--ink)',
+            fontSize: 15, fontWeight: 500,
+          }}>{cancelLabel}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── NavBar / NavBackButton ────────────────────────────────────────────────────
 export function NavBar({ title, left, right, large = false, transparent = false }) {
   return (
