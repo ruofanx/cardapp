@@ -28,7 +28,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -290,6 +290,60 @@ def create_profile(payload: dict, account: dict = Depends(get_current_account)):
         raise HTTPException(status_code=400, detail="name is required")
     color = payload.get("avatar_color", "#34d399")
     return db.create_profile(account["id"], name, color)
+
+
+REVENUECAT_WEBHOOK_SECRET = os.environ.get("REVENUECAT_WEBHOOK_SECRET", "")
+
+_RC_ACTIVE_EVENT_TYPES = {"INITIAL_PURCHASE", "RENEWAL", "PRODUCT_CHANGE", "UNCANCELLATION"}
+
+
+def _revenuecat_plan_update(event: dict) -> tuple[str, object] | None:
+    """Return (plan, trial_ends_at) to write for this webhook event, or None
+    to no-op. CANCELLATION/BILLING_ISSUE/unrecognized types are no-ops by
+    design (see spec §3.3) — access is only revoked on EXPIRATION."""
+    event_type = event.get("type")
+    entitlement_ids = event.get("entitlement_ids") or []
+
+    if event_type == "EXPIRATION":
+        return ("free", None)
+
+    if event_type in _RC_ACTIVE_EVENT_TYPES and "pro" in entitlement_ids:
+        expiration_ms = event.get("expiration_at_ms")
+        if event.get("period_type") == "TRIAL" and expiration_ms:
+            trial_ends_at = datetime.fromtimestamp(expiration_ms / 1000, tz=timezone.utc)
+        else:
+            trial_ends_at = None
+        return ("pro", trial_ends_at)
+
+    return None
+
+
+@app.post("/api/webhooks/revenuecat")
+async def revenuecat_webhook(payload: dict, authorization: str | None = Header(default=None)):
+    if not REVENUECAT_WEBHOOK_SECRET or authorization != REVENUECAT_WEBHOOK_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+    event = payload.get("event")
+    if not isinstance(event, dict) or "type" not in event or "app_user_id" not in event:
+        raise HTTPException(status_code=400, detail="Malformed webhook payload")
+
+    update = _revenuecat_plan_update(event)
+    if update is None:
+        return {"ok": True}
+
+    plan, trial_ends_at = update
+    account_id = event["app_user_id"]
+    if not db.get_account(account_id):
+        log.warning("revenuecat webhook: unknown account_id %r, ignoring", account_id)
+        return {"ok": True}
+
+    try:
+        db.update_account_plan(account_id, plan=plan, trial_ends_at=trial_ends_at)
+    except Exception:
+        log.exception("revenuecat webhook: failed to update account %r", account_id)
+        raise HTTPException(status_code=500, detail="Failed to update account")
+
+    return {"ok": True}
 
 
 @app.patch("/api/profiles/trade-mode")
