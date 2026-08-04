@@ -245,16 +245,25 @@ class TagAttach(BaseModel):
 
 FREE_SCAN_LIMIT = 20
 
+
+def account_is_pro(account: dict) -> bool:
+    """True if the account is on a paid plan or currently within a trial
+    window — either the signup grace trial (set once at account creation)
+    or an active StoreKit subscription trial (set by the RevenueCat
+    webhook). Both share the same trial_ends_at column."""
+    if account["plan"] == "pro":
+        return True
+    trial_ends_at = account.get("trial_ends_at")
+    return trial_ends_at is not None and trial_ends_at > datetime.now(timezone.utc)
+
+
 @app.get("/api/account")
 def get_account_info(account: dict = Depends(get_current_account)):
     """Return current account info (plan, trial status) + profiles + scan usage."""
     profiles = db.list_profiles(account["id"])
     month = datetime.now(timezone.utc).strftime("%Y-%m")
     scan_used = db.get_scan_count(account["id"], month)
-    is_pro = account["plan"] == "pro" or (
-        account["trial_ends_at"] is not None
-        and account["trial_ends_at"] > datetime.now(timezone.utc)
-    )
+    is_pro = account_is_pro(account)
     return {
         **account,
         "profiles": profiles,
@@ -272,7 +281,7 @@ def list_profiles(account: dict = Depends(get_current_account)):
 @app.post("/api/profiles")
 def create_profile(payload: dict, account: dict = Depends(get_current_account)):
     FREE_PROFILE_LIMIT = 1
-    is_paid = account.get("plan") == "pro"
+    is_paid = account_is_pro(account)
     count = db.count_profiles(account["id"])
     if not is_paid and count >= FREE_PROFILE_LIMIT:
         raise HTTPException(status_code=402, detail="Upgrade to add more profiles")
@@ -1598,10 +1607,7 @@ from fastapi import Request
 async def identify(request: Request, account: dict | None = Depends(get_current_account_optional)):
     if account:
         month = datetime.now(timezone.utc).strftime("%Y-%m")
-        is_pro = account["plan"] == "pro" or (
-            account["trial_ends_at"] is not None
-            and account["trial_ends_at"] > datetime.now(timezone.utc)
-        )
+        is_pro = account_is_pro(account)
         if not is_pro:
             count = db.get_scan_count(account["id"], month)
             if count >= FREE_SCAN_LIMIT:
