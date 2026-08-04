@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react'
 import api from '../api.js'
 import { NavBar, Icon, CardArt } from '../components.jsx'
 import { CARDS } from '../data.js'
+import PaywallSheet from '../PaywallSheet.jsx'
+import { restorePurchases, customerInfoIsPro } from '../purchases.js'
 
 function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, setCurrentUser, collection = [], backend, reloadCollection, onSignOut }) {
   const setsCount = new Set((collection || []).map(c => c.set).filter(Boolean)).size;
@@ -13,6 +15,8 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
   const [tradeMode, setTradeMode] = useState(currentUser?.trade_mode ?? false);
   const [tradeModeLoading, setTradeModeLoading] = useState(false);
   const [account, setAccount] = useState(null);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [restoreStatus, setRestoreStatus] = useState(null); // null | 'checking' | 'restored' | 'nothing' | 'error'
 
   useEffect(() => {
     if (backend?.online === false || !api.getAccount) return;
@@ -43,6 +47,16 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
       setRefreshing(false);
     }
   };
+
+  if (showPaywall) {
+    return (
+      <PaywallSheet
+        reason="general"
+        onClose={() => setShowPaywall(false)}
+        onUpgraded={() => { setShowPaywall(false); api.getAccount().then(a => setAccount(a)).catch(() => {}); }}
+      />
+    );
+  }
 
   return (
     <div className="screen">
@@ -94,11 +108,11 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
                       )}
                     </div>
                     {!isPro && (
-                      <div style={{
-                        padding: '5px 12px', borderRadius: 999,
+                      <button className="tap" onClick={() => setShowPaywall(true)} style={{
+                        padding: '5px 12px', borderRadius: 999, border: 'none',
                         background: 'var(--accent)', color: 'var(--accent-ink)',
-                        fontSize: 11, fontWeight: 700,
-                      }}>Upgrade</div>
+                        fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      }}>Upgrade</button>
                     )}
                   </div>
                   {scanLimit != null && (
@@ -237,6 +251,28 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
           <SettingsRow label="Pricing engines" value="eBay Browse · PriceCharting · Cardmarket · TCGplayer"/>
           <ExportRow />
         </SettingsSection>
+
+        <div style={{ padding: '0 16px 16px' }}>
+          <button className="tap row gap-1" onClick={async () => {
+            setRestoreStatus('checking');
+            try {
+              const info = await restorePurchases();
+              setRestoreStatus(customerInfoIsPro(info) ? 'restored' : 'nothing');
+              if (customerInfoIsPro(info)) {
+                api.getAccount().then(a => setAccount(a)).catch(() => {});
+              }
+            } catch {
+              setRestoreStatus('error');
+            }
+          }} style={{ fontSize: 13, color: 'var(--ink-3)', padding: '10px 0' }}>
+            <Icon name="refresh" size={14} />
+            {restoreStatus === 'checking' ? 'Checking…'
+              : restoreStatus === 'restored' ? 'Purchases restored'
+              : restoreStatus === 'nothing' ? 'No purchases found'
+              : restoreStatus === 'error' ? 'Restore failed — try again'
+              : 'Restore Purchases'}
+          </button>
+        </div>
 
         <div style={{ padding: '8px 16px 24px' }}>
           {onSignOut && (
