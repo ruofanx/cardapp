@@ -93,6 +93,41 @@ def test_tags(test_user):
     fetched = db.get_card(card.id)
     assert any(t.id == tag.id for t in fetched.tags)
 
+
+@pytest.fixture
+def test_account():
+    import uuid
+    account = db.create_account(str(uuid.uuid4()), "test-account@example.com")
+    yield account
+    db.delete_account(account["id"])
+
+
+def test_update_account_plan_to_pro(test_account):
+    updated = db.update_account_plan(test_account["id"], plan="pro", trial_ends_at=None)
+    assert updated is not None
+    assert updated["plan"] == "pro"
+    assert updated["trial_ends_at"] is None
+
+
+def test_update_account_plan_sets_trial(test_account):
+    from datetime import datetime, timezone, timedelta
+    trial_end = datetime.now(timezone.utc) + timedelta(days=14)
+    updated = db.update_account_plan(test_account["id"], plan="pro", trial_ends_at=trial_end)
+    assert updated["plan"] == "pro"
+    assert updated["trial_ends_at"] is not None
+
+
+def test_update_account_plan_unknown_account_returns_none():
+    import uuid
+    result = db.update_account_plan(str(uuid.uuid4()), plan="pro", trial_ends_at=None)
+    assert result is None
+
+
+def test_delete_account_removes_row(test_account):
+    uid = test_account["id"]
+    assert db.delete_account(uid) is True
+    assert db.get_account(uid) is None
+
 def test_portfolio_summary(test_user):
     from db_postgres import Card
     db.create_card(Card(

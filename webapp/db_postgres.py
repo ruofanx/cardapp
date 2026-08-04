@@ -613,6 +613,27 @@ def create_account(uid: str, email: str) -> dict:
         return _fallback_account(uid, email)
 
 
+def update_account_plan(uid: str, *, plan: str, trial_ends_at) -> dict | None:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE accounts SET plan = %s, trial_ends_at = %s WHERE id = %s "
+            "RETURNING id, email, plan, trial_ends_at",
+            (plan, trial_ends_at, uid),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
+
+
+def delete_account(uid: str) -> bool:
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM accounts WHERE id = %s", (uid,))
+        return cur.rowcount > 0
+
+
 def _row_to_profile(row) -> dict:
     return {
         "id": row["id"],
