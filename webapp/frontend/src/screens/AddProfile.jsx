@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import api from '../api.js'
-import { Icon, NavBar, NavBackButton } from '../components.jsx'
+import { NavBar, NavBackButton } from '../components.jsx'
 import PaywallSheet from '../PaywallSheet.jsx'
 
 const COLORS = ['#34d399', '#60a5fa', '#f472b6', '#fb923c', '#a78bfa', '#facc15', '#f87171', '#4ade80']
