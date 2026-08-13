@@ -1,0 +1,52 @@
+{
+  "identifier": "68F1A2C0-0000-0000-0000-000000000001",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_askToBuyEnabled": false,
+    "_billingIssuesEnabled": false,
+    "_disableDialogs": false,
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "21000000000001",
+      "localizations": [],
+      "name": "PokeCollect Pro",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "3.99",
+          "familyShareable": true,
+          "groupNumber": 1,
+          "internalID": "21000000000002",
+          "introductoryOffer": {
+            "internalID": "21000000000003",
+            "paymentMode": "free",
+            "subscriptionPeriod": "P2W"
+          },
+          "localizations": [
+            {
+              "description": "Unlimited profiles, unlimited scans, full price history.",
+              "displayName": "PokeCollect Pro Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.pokecollect.app.pro.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "PokeCollect Pro Monthly",
+          "subscriptionGroupID": "21000000000001",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

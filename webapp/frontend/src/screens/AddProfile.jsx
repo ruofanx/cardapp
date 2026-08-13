@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import api from '../api.js'
-import { Icon, NavBar, NavBackButton, ListGroup, ListRow, Button } from '../components.jsx'
+import { NavBar, NavBackButton, ListGroup, ListRow, Button } from '../components.jsx'
+import PaywallSheet from '../PaywallSheet.jsx'
 
 const COLORS = ['#34d399', '#60a5fa', '#f472b6', '#fb923c', '#a78bfa', '#facc15', '#f87171', '#4ade80']
 
@@ -10,9 +11,12 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showPaywall, setShowPaywall] = useState(false)
+  const [justUpgraded, setJustUpgraded] = useState(false)
 
-  async function handleCreate(e) {
-    e.preventDefault()
+  // `afterUpgrade` is passed explicitly by the post-purchase retry: calling
+  // setJustUpgraded(true) then submitCreate() in the same handler would still
+  // read the stale `justUpgraded === false` from this render's closure.
+  async function submitCreate(afterUpgrade = false) {
     if (!name.trim()) return
     setLoading(true)
     setError('')
@@ -22,7 +26,11 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
       goBack()
     } catch (err) {
       if (err.status === 402) {
-        setShowPaywall(true)
+        if (afterUpgrade || justUpgraded) {
+          setError('Your upgrade is still processing — please try again in a moment.')
+        } else {
+          setShowPaywall(true)
+        }
       } else {
         setError(err.message || 'Failed to create profile')
       }
@@ -31,8 +39,23 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
     }
   }
 
+  function handleCreate(e) {
+    e.preventDefault()
+    submitCreate()
+  }
+
   if (showPaywall) {
-    return <PaywallSheet onClose={() => setShowPaywall(false)} onUpgrade={() => navigate('settings')} />
+    return (
+      <PaywallSheet
+        reason="profiles"
+        onClose={() => setShowPaywall(false)}
+        onUpgraded={() => {
+          setShowPaywall(false)
+          setJustUpgraded(true)
+          submitCreate(true)
+        }}
+      />
+    )
   }
 
   return (
@@ -134,50 +157,6 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
             </div>
           </div>
         )}
-      </div>
-    </div>
-  )
-}
-
-function PaywallSheet({ onClose, onUpgrade }) {
-  return (
-    <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
-      <NavBar
-        title=""
-        left={<NavBackButton onClick={onClose} label="Back" />}
-      />
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px 28px', gap: 0 }}>
-        <div className="foil" style={{ width: 72, height: 72, borderRadius: 20, animation: 'foilRot 18s linear infinite', marginBottom: 24 }} />
-        <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 8, textAlign: 'center' }}>
-          Upgrade to Family/Pro
-        </div>
-        <div style={{ fontSize: 15, color: 'var(--ink-3)', textAlign: 'center', lineHeight: 1.55, marginBottom: 32 }}>
-          The free plan includes 1 profile. Upgrade to add unlimited profiles for everyone in your family.
-        </div>
-
-        <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-          {[
-            ['Unlimited profiles', 'Add all your kids with their own collections'],
-            ['Unlimited scans', 'No monthly limit on card identification'],
-            ['Full price history', 'Charts and trend data for every card'],
-            ['Price alerts', 'Get notified when a card hits your target'],
-          ].map(([title, desc]) => (
-            <div key={title} className="row gap-3" style={{ padding: '12px 14px', background: 'var(--bg-1)', borderRadius: 12 }}>
-              <Icon name="check" size={18} style={{ color: 'var(--accent)', flexShrink: 0, marginTop: 1 }} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>{title}</div>
-                <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 1 }}>{desc}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <Button variant="filled" onClick={onUpgrade}>
-          Upgrade · $3.99/mo
-        </Button>
-        <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 10, textAlign: 'center' }}>
-          14-day free trial · Cancel anytime
-        </div>
       </div>
     </div>
   )

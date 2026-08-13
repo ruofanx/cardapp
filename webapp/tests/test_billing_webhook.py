@@ -124,3 +124,26 @@ def test_webhook_db_failure_returns_500(client, monkeypatch):
     monkeypatch.setattr(app_module.db, "update_account_plan", boom)
     res = client.post("/api/webhooks/revenuecat", json=_event(), headers={"Authorization": WEBHOOK_SECRET})
     assert res.status_code == 500
+
+
+def test_webhook_transfer_event_without_app_user_id_returns_200(client, monkeypatch):
+    """RevenueCat TRANSFER events carry transferred_from/transferred_to but no
+    app_user_id. They must no-op with 200, not 400 (a 400 makes RevenueCat retry
+    the delivery indefinitely)."""
+    def boom(*a, **k):
+        raise AssertionError("update_account_plan should not be called for TRANSFER")
+    monkeypatch.setattr(app_module.db, "update_account_plan", boom)
+    payload = {"event": {"type": "TRANSFER", "transferred_from": ["x"], "transferred_to": ["y"]}}
+    res = client.post("/api/webhooks/revenuecat", json=payload, headers={"Authorization": WEBHOOK_SECRET})
+    assert res.status_code == 200
+
+
+def test_webhook_actionable_event_missing_app_user_id_returns_200(client, monkeypatch):
+    """An otherwise-actionable event with no app_user_id is ignored with 200
+    rather than raising."""
+    def boom(*a, **k):
+        raise AssertionError("update_account_plan should not be called without an app_user_id")
+    monkeypatch.setattr(app_module.db, "update_account_plan", boom)
+    payload = {"event": {"type": "INITIAL_PURCHASE", "entitlement_ids": ["pro"], "period_type": "NORMAL"}}
+    res = client.post("/api/webhooks/revenuecat", json=payload, headers={"Authorization": WEBHOOK_SECRET})
+    assert res.status_code == 200
