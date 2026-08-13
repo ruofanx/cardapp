@@ -11,9 +11,12 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showPaywall, setShowPaywall] = useState(false)
+  const [justUpgraded, setJustUpgraded] = useState(false)
 
-  async function handleCreate(e) {
-    e.preventDefault()
+  // `afterUpgrade` is passed explicitly by the post-purchase retry: calling
+  // setJustUpgraded(true) then submitCreate() in the same handler would still
+  // read the stale `justUpgraded === false` from this render's closure.
+  async function submitCreate(afterUpgrade = false) {
     if (!name.trim()) return
     setLoading(true)
     setError('')
@@ -23,7 +26,11 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
       goBack()
     } catch (err) {
       if (err.status === 402) {
-        setShowPaywall(true)
+        if (afterUpgrade || justUpgraded) {
+          setError('Your upgrade is still processing — please try again in a moment.')
+        } else {
+          setShowPaywall(true)
+        }
       } else {
         setError(err.message || 'Failed to create profile')
       }
@@ -32,8 +39,23 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
     }
   }
 
+  function handleCreate(e) {
+    e.preventDefault()
+    submitCreate()
+  }
+
   if (showPaywall) {
-    return <PaywallSheet reason="profiles" onClose={() => setShowPaywall(false)} onUpgraded={() => setShowPaywall(false)} />
+    return (
+      <PaywallSheet
+        reason="profiles"
+        onClose={() => setShowPaywall(false)}
+        onUpgraded={() => {
+          setShowPaywall(false)
+          setJustUpgraded(true)
+          submitCreate(true)
+        }}
+      />
+    )
   }
 
   return (

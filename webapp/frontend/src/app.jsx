@@ -204,9 +204,8 @@ export default function App() {
       setBackend(b => ({ ...b, online: true, error: null }))
       return candidates
     } catch (e) {
-      if (e.networkError) {
-        setBackend(b => ({ ...b, online: false, error: String(e.message || e) }))
-      }
+      if (e.networkError === false) throw e
+      setBackend(b => ({ ...b, online: false, error: String(e.message || e) }))
       return []
     }
   }, [])
@@ -223,13 +222,13 @@ export default function App() {
       if (data.session) {
         setAuthToken(data.session.access_token)
         setAuthed(true)
-        configurePurchases(data.session.user.id)
+        configurePurchases(data.session.user.id).catch(() => {})
       }
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setAuthToken(session?.access_token || null)
       setAuthed(!!session)
-      if (session) configurePurchases(session.user.id)
+      if (session) configurePurchases(session.user.id).catch(() => {})
     })
     return () => subscription.unsubscribe()
   }, [])

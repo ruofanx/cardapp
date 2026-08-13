@@ -102,6 +102,11 @@ export default function PaywallSheet({ reason = 'general', onClose, onUpgraded }
             Waiting for approval (Ask to Buy) — this screen will update once it's approved.
           </div>
         )}
+        {status === 'ready' && !pkg && (
+          <div style={{ width: '100%', color: 'var(--ink-2)', fontSize: 13, padding: '8px 12px', background: 'var(--bg-1)', borderRadius: 8, marginBottom: 16, textAlign: 'center' }}>
+            Subscriptions are temporarily unavailable — please try again later.
+          </div>
+        )}
 
         <button
           onClick={handleUpgrade}
@@ -111,7 +116,7 @@ export default function PaywallSheet({ reason = 'general', onClose, onUpgraded }
             background: 'var(--accent)', color: 'var(--accent-ink)',
             fontWeight: 700, fontSize: 17, border: 'none',
             cursor: (status === 'ready' && pkg) ? 'pointer' : 'not-allowed',
-            opacity: (status === 'loading' || status === 'purchasing') ? 0.7 : 1,
+            opacity: (status === 'loading' || status === 'purchasing' || !pkg) ? 0.7 : 1,
           }}>
           {status === 'purchasing' ? 'Processing…' : `Upgrade · ${priceLine}`}
         </button>

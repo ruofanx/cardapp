@@ -53,7 +53,14 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
       <PaywallSheet
         reason="general"
         onClose={() => setShowPaywall(false)}
-        onUpgraded={() => { setShowPaywall(false); api.getAccount().then(a => setAccount(a)).catch(() => {}); }}
+        onUpgraded={(customerInfo) => {
+          setShowPaywall(false);
+          const optimisticPro = customerInfoIsPro(customerInfo);
+          if (optimisticPro) setAccount(a => a ? { ...a, plan: 'pro', is_pro: true } : a);
+          api.getAccount().then(a => {
+            setAccount(prev => (optimisticPro && !a.is_pro) ? prev : a);
+          }).catch(() => {});
+        }}
       />
     );
   }
@@ -107,7 +114,7 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
                         <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 1 }}>{daysLeft} day{daysLeft !== 1 ? 's' : ''} left in trial</div>
                       )}
                     </div>
-                    {!isPro && (
+                    {account.plan !== 'pro' && (
                       <button className="tap" onClick={() => setShowPaywall(true)} style={{
                         padding: '5px 12px', borderRadius: 999, border: 'none',
                         background: 'var(--accent)', color: 'var(--accent-ink)',

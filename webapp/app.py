@@ -22,6 +22,7 @@ import sys
 import os
 import re
 import logging
+import hmac
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -320,19 +321,23 @@ def _revenuecat_plan_update(event: dict) -> tuple[str, object] | None:
 
 @app.post("/api/webhooks/revenuecat")
 async def revenuecat_webhook(payload: dict, authorization: str | None = Header(default=None)):
-    if not REVENUECAT_WEBHOOK_SECRET or authorization != REVENUECAT_WEBHOOK_SECRET:
+    if not REVENUECAT_WEBHOOK_SECRET or not authorization or not hmac.compare_digest(authorization, REVENUECAT_WEBHOOK_SECRET):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
     event = payload.get("event")
-    if not isinstance(event, dict) or "type" not in event or "app_user_id" not in event:
+    if not isinstance(event, dict) or "type" not in event:
         raise HTTPException(status_code=400, detail="Malformed webhook payload")
 
     update = _revenuecat_plan_update(event)
     if update is None:
         return {"ok": True}
 
+    account_id = event.get("app_user_id")
+    if not account_id:
+        log.warning("revenuecat webhook: event %r missing app_user_id, ignoring", event.get("type"))
+        return {"ok": True}
+
     plan, trial_ends_at = update
-    account_id = event["app_user_id"]
     if not db.get_account(account_id):
         log.warning("revenuecat webhook: unknown account_id %r, ignoring", account_id)
         return {"ok": True}

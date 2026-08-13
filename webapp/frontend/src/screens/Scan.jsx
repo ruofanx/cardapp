@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import api from '../api.js'
 import { CardArt, Icon, Price } from '../components.jsx'
 import PaywallSheet from '../PaywallSheet.jsx'
+import { customerInfoIsPro } from '../purchases.js'
 
 /* Scan — real photo+search identify flow.
  * Visual style preserved from the original camera UI; pipeline log now reflects
@@ -346,9 +347,12 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
       <PaywallSheet
         reason="scans"
         onClose={() => setShowPaywall(false)}
-        onUpgraded={() => {
+        onUpgraded={(customerInfo) => {
           setShowPaywall(false);
+          const optimisticPro = customerInfoIsPro(customerInfo);
+          if (optimisticPro) setScanUsage(null);
           api.getAccount().then(acct => {
+            if (optimisticPro && acct?.scan_limit != null) return;
             if (acct?.scan_limit != null) setScanUsage({ used: acct.scan_used ?? 0, limit: acct.scan_limit });
             else setScanUsage(null);
           }).catch(() => {});

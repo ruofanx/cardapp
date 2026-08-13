@@ -11,6 +11,7 @@ let configured = false
 
 export async function configurePurchases(accountId) {
   if (configured || !accountId) return
+  if (typeof window === 'undefined' || !window.Capacitor?.isNativePlatform?.()) return
   await Purchases.setLogLevel({ level: LOG_LEVEL.INFO })
   await Purchases.configure({ apiKey: REVENUECAT_PUBLIC_SDK_KEY, appUserID: accountId })
   configured = true
