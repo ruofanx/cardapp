@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import api from '../api.js'
-import { NavBar, Icon, CardArt } from '../components.jsx'
+import { NavBar, Icon, CardArt, Button } from '../components.jsx'
 import { CARDS } from '../data.js'
 import PaywallSheet from '../PaywallSheet.jsx'
 import { restorePurchases, customerInfoIsPro } from '../purchases.js'
@@ -237,14 +237,9 @@ function SettingsScreen({ tweaks, setTweak, navigate, users = [], currentUser, s
           <SettingsRow label="Price provider" value="TCGplayer · Cardmarket · PriceCharting"/>
           <SettingsRow label="Refresh" value={health?.scheduler === 'running' ? 'Daily 7am CT · scheduler running' : 'Daily 7am CT'}/>
           <div style={{ padding: '10px 14px', borderTop: '1px solid var(--hairline-soft)' }}>
-            <button className="tap" onClick={handleRefreshAll} disabled={refreshing || backend?.online === false}
-              style={{
-                width: '100%', padding: '9px 0', borderRadius: 10,
-                background: 'var(--accent)', color: 'var(--accent-ink)',
-                fontWeight: 600, fontSize: 13, opacity: (refreshing || backend?.online === false) ? 0.5 : 1,
-              }}>
+            <Button variant="filled" onClick={handleRefreshAll} disabled={refreshing || backend?.online === false}>
               {refreshing ? 'Refreshing…' : 'Refresh all prices now'}
-            </button>
+            </Button>
             {refreshMsg && (
               <div style={{ marginTop: 6, fontSize: 12, color: refreshMsg.startsWith('Error') ? 'var(--neg)' : 'var(--pos)', textAlign: 'center' }}>
                 {refreshMsg}
@@ -437,9 +432,9 @@ function OnboardingScreen({ navigate, setTweak, tweaks }) {
             }}/>
           ))}
         </div>
-        <button className="tap" onClick={() => step === steps.length - 1 ? navigate('home') : setStep(step + 1)} style={{
-          padding: '16px', borderRadius: 14, background: 'var(--accent)', color: 'var(--accent-ink)', fontWeight: 600, fontSize: 15,
-        }}>{step === steps.length - 1 ? 'Open my binder' : 'Continue'}</button>
+        <Button variant="filled" onClick={() => step === steps.length - 1 ? navigate('home') : setStep(step + 1)}>
+          {step === steps.length - 1 ? 'Open my binder' : 'Continue'}
+        </Button>
       </div>
     </div>
   );

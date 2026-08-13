@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react'
 import api from '../api.js'
-import { CardArt, Icon, Price, fmtPrice, NavBar, ProductTypeBadge, tagNamesOf } from '../components.jsx'
+import { CardArt, Icon, Price, fmtPrice, NavBar, ProductTypeBadge, tagNamesOf, SegmentedControl } from '../components.jsx'
 
 const GRADER_LOGOS = { PSA: 1, BGS: 1, CGC: 1, SGC: 1, HGA: 1 };
 
@@ -336,16 +336,12 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
 
       {/* View + sort */}
       <div className="row" style={{ padding: '0 16px 8px', justifyContent: 'space-between' }}>
-        <div className="row gap-1" style={{ background: 'var(--bg-2)', borderRadius: 8, padding: 2 }}>
-          {['grid', 'list', 'set'].map(v => (
-            <button key={v} className="tap" onClick={() => { setView(v); exitSelectMode(); }} style={{
-              padding: '5px 10px', borderRadius: 6,
-              background: view === v ? 'var(--bg-3)' : 'transparent',
-              color: view === v ? 'var(--ink)' : 'var(--ink-3)',
-              fontSize: 11, fontWeight: 600, textTransform: 'capitalize',
-            }}>{v}</button>
-          ))}
-        </div>
+        <SegmentedControl
+          options={[{ value: 'grid', label: 'Grid' }, { value: 'list', label: 'List' }, { value: 'set', label: 'Set' }]}
+          value={view}
+          onChange={(v) => { setView(v); exitSelectMode(); }}
+          size="sm"
+        />
         <div className="row gap-2">
           {removeCard && !selectMode && items.length > 0 && (
             <button className="tap" onClick={() => setSelectMode(true)} style={{
