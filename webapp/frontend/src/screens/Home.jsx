@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react'
 import api from '../api.js'
-import { CardArt, Icon, Price, Sparkline, Section, fmtUSD, fmtJPY, fmtPrice } from '../components.jsx'
+import { CardArt, Icon, Price, Sparkline, Section, SegmentedControl, fmtUSD, fmtJPY, fmtPrice } from '../components.jsx'
 
 const RANGE_META = {
   '1W':  { days: 7,    label: 'past week' },
@@ -480,19 +480,13 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
               })}
             </div>
           </div>
-          <div className="row" style={{ padding: '10px 16px 0', gap: 6, justifyContent: 'space-between' }}>
-            {['1W', '1M', '3M', '1Y', 'ALL'].map((r) => {
-              const active = r === range;
-              return (
-                <button key={r} className="tap" onClick={() => setRange(r)} style={{
-                  flex: 1, padding: '6px 0', borderRadius: 8,
-                  background: active ? 'var(--bg-2)' : 'transparent',
-                  color: active ? 'var(--ink)' : 'var(--ink-3)',
-                  fontSize: 12, fontWeight: 600, letterSpacing: '0.02em',
-                  transition: 'background 120ms ease, color 120ms ease',
-                }}>{r}</button>
-              );
-            })}
+          <div style={{ padding: '10px 16px 0' }}>
+            <SegmentedControl
+              options={['1W', '1M', '3M', '1Y', 'ALL'].map(r => ({ value: r, label: r }))}
+              value={range}
+              onChange={setRange}
+              size="sm"
+            />
           </div>
         </div>
           );

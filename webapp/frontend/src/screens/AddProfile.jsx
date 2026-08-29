@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import api from '../api.js'
-import { NavBar, NavBackButton } from '../components.jsx'
+import { NavBar, NavBackButton, ListGroup, ListRow, Button } from '../components.jsx'
 import PaywallSheet from '../PaywallSheet.jsx'
 
 const COLORS = ['#34d399', '#60a5fa', '#f472b6', '#fb923c', '#a78bfa', '#facc15', '#f87171', '#4ade80']
@@ -99,29 +99,25 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
             <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--ink-3)', marginBottom: 8 }}>
               Name
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <div style={{
-                width: 48, height: 48, borderRadius: 24, background: color, flexShrink: 0,
-                display: 'grid', placeItems: 'center',
-                fontSize: 20, fontWeight: 700, color: '#fff',
-              }}>
-                {name.trim().charAt(0).toUpperCase() || '?'}
-              </div>
-              <input
-                type="text"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="e.g. Reid"
-                maxLength={30}
-                autoFocus
-                style={{
-                  flex: 1, padding: '12px 14px', borderRadius: 12,
-                  border: '1px solid var(--hairline-soft)',
-                  background: 'var(--bg-1)', color: 'var(--ink)',
-                  fontSize: 17, fontWeight: 500, outline: 'none',
-                }}
-              />
-            </div>
+            <ListGroup style={{ marginBottom: 16 }}>
+              <ListRow>
+                <div style={{
+                  width: 48, height: 48, borderRadius: 24, background: color, flexShrink: 0,
+                  display: 'grid', placeItems: 'center',
+                  fontSize: 20, fontWeight: 700, color: '#fff',
+                }}>
+                  {name.trim().charAt(0).toUpperCase() || '?'}
+                </div>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="e.g. Reid"
+                  maxLength={30}
+                  autoFocus
+                />
+              </ListRow>
+            </ListGroup>
           </div>
 
           {error && (
@@ -130,19 +126,9 @@ export default function AddProfileScreen({ navigate, goBack, users, onProfileCre
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={!name.trim() || loading}
-            style={{
-              padding: '14px', borderRadius: 14,
-              background: name.trim() ? 'var(--accent)' : 'var(--bg-3)',
-              color: name.trim() ? 'var(--accent-ink)' : 'var(--ink-3)',
-              fontWeight: 700, fontSize: 16, border: 'none',
-              cursor: name.trim() && !loading ? 'pointer' : 'not-allowed',
-              transition: 'all 0.15s',
-            }}>
+          <Button type="submit" variant="filled" disabled={!name.trim() || loading}>
             {loading ? 'Creating…' : 'Create Profile'}
-          </button>
+          </Button>
         </form>
 
         {/* Existing profiles for context */}

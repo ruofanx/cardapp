@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import api from '../api.js'
-import { CardArt, Icon, NavBar, NavBackButton, fmtPrice, tagNamesOf } from '../components.jsx'
+import { CardArt, Icon, NavBar, NavBackButton, fmtPrice, tagNamesOf, SegmentedControl, Button } from '../components.jsx'
 
 /* Trade show helper — scan or search a card you want, get offer options from your binder */
 
@@ -398,12 +398,9 @@ function TradeCandidatePicker({ candidates, tweaks, cur, onPick }) {
 
       {/* Confirm */}
       <div style={{ padding: '8px 16px 32px', marginTop: 'auto' }}>
-        <button className="tap" onClick={() => onPick(card)} style={{
-          width: '100%', padding: '14px', background: 'var(--accent)', borderRadius: 14,
-          color: '#fff', fontSize: 15, fontWeight: 700,
-        }}>
+        <Button variant="filled" onClick={() => onPick(card)}>
           Use this card →
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -491,17 +488,12 @@ function TradeOffersView({
                 Trade-in value
               </span>
             </div>
-            <div className="row" style={{ gap: 6, marginBottom: 8 }}>
-              {[0.80, 0.85, 0.90].map(f => (
-                <button key={f} className="tap" onClick={() => onTradeInFactorChange(f)} style={{
-                  flex: 1, padding: '8px 0', borderRadius: 10, fontSize: 13, fontWeight: 700,
-                  background: tradeInFactor === f ? 'var(--accent)' : 'var(--bg-2)',
-                  color: tradeInFactor === f ? '#fff' : 'var(--ink-2)',
-                  border: '1px solid var(--hairline-soft)',
-                }}>
-                  {Math.round(f * 100)}%
-                </button>
-              ))}
+            <div style={{ marginBottom: 8 }}>
+              <SegmentedControl
+                options={[0.80, 0.85, 0.90].map(f => ({ value: f, label: `${Math.round(f * 100)}%` }))}
+                value={tradeInFactor}
+                onChange={onTradeInFactorChange}
+              />
             </div>
             <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
               Your binder cards count at {Math.round(tradeInFactor * 100)}% of their market price toward {targets.length > 1 ? 'these' : 'this'}{' '}
@@ -575,13 +567,9 @@ function TradeOffersView({
       </div>
 
       <div style={{ padding: '20px 16px 60px' }}>
-        <button className="tap" onClick={onReset} style={{
-          width: '100%', padding: 14, borderRadius: 14,
-          background: 'var(--bg-2)', border: '1px solid var(--hairline-soft)',
-          color: 'var(--ink-2)', fontSize: 14, fontWeight: 600,
-        }}>
+        <Button variant="plain" onClick={onReset}>
           Search another card
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -778,20 +766,15 @@ function BinderPickerSheet({ collection, excludeIds, onPick, onClose, cur, tweak
             }}
           />
           {tradeOnly.length > 0 && tradeOnly.length !== pool.length && (
-            <div className="row" style={{ gap: 6 }}>
-              <button className="tap" onClick={() => setShowAll(false)} style={{
-                padding: '4px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                background: !showAll ? 'var(--ink)' : 'var(--bg-2)',
-                color: !showAll ? 'var(--bg)' : 'var(--ink-2)',
-                border: '1px solid var(--hairline-soft)',
-              }}>For trade ({tradeOnly.length})</button>
-              <button className="tap" onClick={() => setShowAll(true)} style={{
-                padding: '4px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
-                background: showAll ? 'var(--ink)' : 'var(--bg-2)',
-                color: showAll ? 'var(--bg)' : 'var(--ink-2)',
-                border: '1px solid var(--hairline-soft)',
-              }}>All cards ({pool.length})</button>
-            </div>
+            <SegmentedControl
+              options={[
+                { value: 'trade', label: `For trade (${tradeOnly.length})` },
+                { value: 'all', label: `All cards (${pool.length})` },
+              ]}
+              value={showAll ? 'all' : 'trade'}
+              onChange={v => setShowAll(v === 'all')}
+              size="sm"
+            />
           )}
         </div>
 

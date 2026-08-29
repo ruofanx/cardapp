@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import api from '../api.js'
-import { CardArt, Icon, Price } from '../components.jsx'
+import { CardArt, Icon, Price, SegmentedControl } from '../components.jsx'
 import PaywallSheet from '../PaywallSheet.jsx'
 import { customerInfoIsPro } from '../purchases.js'
 
@@ -453,21 +453,17 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
         {/* Pre-scan TYPE toggle — tells the OCR what's being photographed
             (individual card vs. sealed booster/box/ETB/tin/bundle) so the
             result isn't routed through the wrong pricing/image pipeline. */}
-        <div className="row gap-2" style={{ marginTop: 8 }}>
-          {[
-            { id: 'auto',   label: 'Auto' },
-            { id: 'card',   label: 'Card' },
-            { id: 'sealed', label: 'Sealed' },
-          ].map(opt => (
-            <button key={opt.id} className="tap" onClick={() => setScanType(opt.id)} style={{
-              flex: 1, padding: '6px 0', borderRadius: 999,
-              background: scanType === opt.id ? 'var(--accent)' : 'oklch(0 0 0 / 0.5)',
-              color: scanType === opt.id ? 'var(--accent-ink)' : 'oklch(1 0 0 / 0.85)',
-              backdropFilter: 'blur(12px)',
-              fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
-              border: '1px solid oklch(1 0 0 / 0.1)',
-            }}>{opt.label}</button>
-          ))}
+        <div style={{ marginTop: 8 }}>
+          <SegmentedControl
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'card', label: 'Card' },
+              { value: 'sealed', label: 'Sealed' },
+            ]}
+            value={scanType}
+            onChange={setScanType}
+            size="sm"
+          />
         </div>
       </div>
 
@@ -939,11 +935,14 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {/* Condition chips — hidden when graded */}
             {!isGraded && (
-              <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+              <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                 <div style={{ fontSize: 10, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.05em', flexShrink: 0 }}>COND</div>
-                {['NM','LP','MP','HP','DMG'].map(c => (
-                  <Chip key={c} active={condition === c} onClick={() => setCondition(c)}>{c}</Chip>
-                ))}
+                <div style={{ flex: 1 }}>
+                  <SegmentedControl
+                    options={['NM','LP','MP','HP','DMG'].map(g => ({ value: g, label: g }))}
+                    value={condition} onChange={setCondition} size="sm"
+                  />
+                </div>
               </div>
             )}
             {/* Graded toggle */}
@@ -961,10 +960,11 @@ function ScanResultSheet({ candidates, tweaks, capturedPhotoUrl, capturedPhotoFi
             {/* Grader + grade inputs */}
             {isGraded && (
               <div className="row" style={{ gap: 8 }}>
-                <div className="row" style={{ gap: 4, flexShrink: 0 }}>
-                  {['PSA','CGC','BGS','SGC'].map(g => (
-                    <Chip key={g} active={grader === g} onClick={() => setGrader(g)}>{g}</Chip>
-                  ))}
+                <div style={{ flex: 1 }}>
+                  <SegmentedControl
+                    options={['PSA','CGC','BGS','SGC'].map(g => ({ value: g, label: g }))}
+                    value={grader} onChange={setGrader} size="sm"
+                  />
                 </div>
                 <input
                   type="number" inputMode="decimal" step="0.5" min="1" max="10"
