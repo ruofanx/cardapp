@@ -79,8 +79,13 @@ async def _get_catalog_price(
     if not base or not base.market_price:
         return None, None
     is_cardmarket_jp = getattr(base, "source", "") == "cardmarket-jp"
-    # TCGplayer EN prices don't reflect the JP market — skip for JP cards.
-    if language.lower() == "japanese" and not is_cardmarket_jp:
+    # TCGplayer EN prices don't reflect a non-English market — skip for any
+    # non-EN card. (Not just JP: `card_lookup.lookup_card` has no Chinese-
+    # specific catalog route, so a "chinese" lookup falls straight into the
+    # EN Pokemon TCG API and can spuriously match an EN print that happens to
+    # share the same card number — e.g. Chinese-151 Illustration Rare Pikachu
+    # #173 vs the unrelated EN Scarlet & Violet 151 Pikachu #173.)
+    if language.lower() != "english" and not is_cardmarket_jp:
         return None, None
     label = "Cardmarket EUR (JP)" if is_cardmarket_jp else "TCGplayer market (EN)"
     return float(base.market_price), label
