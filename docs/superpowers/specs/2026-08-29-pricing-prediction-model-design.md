@@ -22,10 +22,16 @@ One core model serves four use cases:
 4. **Sanity check** — flag cards whose market price diverges from
    fundamentals (over/undervalued).
 
-**Language scope:** EN, JP, and Chinese-exclusive cards from day one. CN
-cards have almost no comps, so the fundamentals prediction is often their
-only price signal; they carry an explicitly wider uncertainty band because
-the CN market factor is fitted from thin data.
+**Language scope:** EN, JP, and Chinese-exclusive cards from day one for the
+*model* (rarity ladder, era buckets, and the language coefficient all cover
+CN). In practice, CN predictions are blocked on identity resolution, not on
+the model: no rarity source for Chinese-exclusive cards exists anywhere in
+this codebase yet (the JP lookup module is hardcoded to TCGdex's Japanese
+endpoint; the EN lookup is Pokemon TCG API only). Until a CN identity/rarity
+source is added, CN cards get the same honest "no prediction" degradation
+as an unmapped rarity string — not a wrong guess. JP predictions work from
+day one; they carry a wider band because JP training data is thin (see
+Risks).
 
 **Data policy:** free/derivable inputs only. No paid APIs. PSA and GemRate
 population pages were both evaluated for scraping and are Cloudflare-blocked
@@ -250,5 +256,9 @@ The model degrades gracefully per missing input, and says so in the UI:
   among several.
 - **CN training data is thin** — the CN language factor leans on EN/JP
   structure; mitigated by the wider band and honest missing-input notes.
+- **No CN identity/rarity source exists yet** — Chinese-exclusive cards
+  can't get a prediction at all until a rarity lookup is added for them
+  (see Language scope above); the CN language coefficient exists in the
+  model and is ready the moment such a source is wired in.
 - **Reprints** — break lifecycle assumptions; mitigated by the reprint-
   pressure flag.
