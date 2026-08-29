@@ -8,7 +8,7 @@
 A fundamentals-based fair-value model for Pokemon cards. Today the app only
 *observes* market prices (eBay Browse, PriceCharting, TCGplayer, Cardmarket
 via `raw_price_resolver.py`). This subsystem *predicts* what a card should be
-worth from structural factors — pull-rate scarcity, PSA population, rarity,
+worth from structural factors — pull-rate scarcity, grade scarcity, rarity,
 character attraction, and where the card sits in its market lifecycle — and
 compares that prediction against the observed price.
 
@@ -27,8 +27,12 @@ cards have almost no comps, so the fundamentals prediction is often their
 only price signal; they carry an explicitly wider uncertainty band because
 the CN market factor is fitted from thin data.
 
-**Data policy:** free/derivable inputs only. No paid APIs. PSA population
-comes from polite, cached scraping of public pop-report pages.
+**Data policy:** free/derivable inputs only. No paid APIs. PSA and GemRate
+population pages were both evaluated for scraping and are Cloudflare-blocked
+(confirmed 403/managed-challenge on both — the same class of block already
+documented for eBay sold-listings in this repo). No free source of real
+grading-population data exists, so grade scarcity is a derived heuristic
+instead (see feature 3 below), not scraped.
 
 ## Data layer
 
@@ -49,12 +53,16 @@ comes from polite, cached scraping of public pop-report pages.
    Effective scarcity = pulls-per-box ÷ number of cards competing in that
    rarity slot within the set.
 
-3. **PSA population.** Scraped from PSA's public pop-report pages (covers
-   EN, JP, and CN cards), cached in SQLite following the existing
-   `pricecharting_cache` pattern, refreshed weekly. Per card: `total_pop`,
-   `pop10`, `gem_rate = pop10 / total_pop`. Gem rate is both a scarcity
-   signal and the probability input for grade-worthiness EV. BGS pops are
-   out of scope for V1; the schema leaves room for them.
+3. **Grade-scarcity estimate (`gem_rate`).** Not scraped — PSA and GemRate
+   are both Cloudflare-blocked (see Data policy above). Instead, the same
+   treatment as pull-rate: a config table keyed by (era, canonical rarity
+   tier, surface type — textured/full-art foils gem noticeably worse than
+   standard holo) seeded from well-known community gem-rate ranges,
+   overridable per set. This is explicitly an estimate, not measured
+   population data, and the confidence band accounts for that. The
+   `card_features.gem_rate` column is named generically so a future paid
+   source (PSA API, GemRate API) can populate it with real data with zero
+   schema rework.
 
 4. **Character attraction.** A curated static tier file (S/A/B/C/D) of
    species and trainer characters, seeded from official popularity polls and
@@ -69,10 +77,8 @@ comes from polite, cached scraping of public pop-report pages.
 ### New tables (SQLite)
 
 - `card_features` — per card: canonical rarity, pull-rate scarcity,
-  `psa_total_pop`, `psa_pop10`, `gem_rate`, character tier,
-  `is_trainer_art`, language, set release date, `features_updated_at`.
-- `psa_pop_cache` — raw scraped pop-report payloads keyed by URL, so refits
-  and feature rebuilds never re-scrape.
+  `gem_rate` (heuristic estimate), character tier, `is_trainer_art`,
+  language, set release date, `features_updated_at`.
 - `market_corpus` — training rows harvested from PriceCharting:
   (card key, month, raw price, psa10 price).
 - `model_runs` — versioned fit artifacts: coefficients JSON,
@@ -89,7 +95,6 @@ log(raw_price)   = β0 + β_era + β_lang + β_pull·log(pull_scarcity)
                    + β_char[tier] + lifecycle(months_since_release) + ε
 
 log(psa10_price) = same features + β_gem·log(1/gem_rate)
-                   + β_pop10·log(1/pop10)
 ```
 
 Fitting in log space makes every coefficient a multiplier, so each
@@ -138,8 +143,10 @@ EV(grading) = gem_rate × predicted_PSA10
 ```
 
 PSA9 is approximated as a fitted fraction of PSA10 (single corpus-wide
-ratio in V1). Grading fee is a config constant. Positive EV with margin →
-"worth grading" verdict; the full arithmetic is shown to the user.
+ratio in V1). `gem_rate` here is the heuristic estimate, not a measured
+rate — the EV verdict is labeled "estimated" in the UI. Grading fee is a
+config constant. Positive EV with margin → "worth grading" verdict; the
+full arithmetic is shown to the user.
 
 ### Confidence
 
@@ -157,8 +164,6 @@ seeds it; a monthly job refreshes it before refit.
 
 ## Jobs (extends `refresh_job.py`)
 
-- **Weekly** — PSA pop refresh for collection cards, piggybacking the
-  existing Sunday 6am slot.
 - **Monthly** — corpus refresh + model refit. A refit that degrades fit
   quality beyond a threshold (vs. the previous run's residual stats) keeps
   the previous `model_runs` row active and logs a warning instead of
@@ -166,9 +171,9 @@ seeds it; a monthly job refreshes it before refit.
 - **One-time** — corpus backfill CLI (pattern of
   `backfill_historical_prices.py`) to harvest the training sets.
 
-PSA scrape failures never block anything: features go stale with a visible
-`features_updated_at` timestamp, predictions keep computing from the last
-known values.
+`gem_rate` is a static heuristic lookup (no network call, nothing to go
+stale) — feature staleness in practice means an unmapped rarity/era/surface
+combination, handled by the fallback in Error handling below.
 
 ## API
 
@@ -200,26 +205,31 @@ flag.
 
 The model degrades gracefully per missing input, and says so in the UI:
 
-- No PSA pop data → scarcity factor drops out, band widens, panel notes
-  "no PSA population data".
+- Unmapped (era, rarity, surface type) combo for `gem_rate` → falls back to
+  a rarity-tier-only default estimate, band widens, panel notes "estimated
+  gem rate".
 - Unknown character → tier C default.
 - Unmapped rarity string → logged; **no prediction** rather than a wrong one.
 - CN cards → always the wider band.
-- Stale features → visible timestamp; predictions still compute.
-- Scrape/HTTP failures → cached values used; jobs log and continue.
+- Stale features (rarity/character lookups) → visible timestamp;
+  predictions still compute.
+- PriceCharting scrape/HTTP failures during corpus refresh → cached values
+  used; job logs and continues.
 
 ## Testing
 
 - Unit tests: rarity normalization mapping (all known strings), pull-rate
-  config lookup + per-set overrides, pop-report HTML parsing against
-  fixture pages, grade-EV arithmetic.
+  config lookup + per-set overrides, `gem_rate` heuristic lookup + fallback
+  behavior, grade-EV arithmetic.
 - Fit-quality regression test: fit on a frozen corpus fixture, assert R²
   and coefficient-sign sanity, so refactors can't silently break the model.
 - API tests: prediction endpoint happy path plus each degraded-input path.
 
 ## Out of scope (V1)
 
-- BGS/CGC population data (schema leaves room).
+- Real PSA/GemRate/BGS population data — both evaluated and confirmed
+  Cloudflare-blocked; `gem_rate` is a heuristic estimate instead. Column is
+  schema-ready for a future paid source (PSA API, GemRate API).
 - Dynamic character popularity (search/sales volume); the tier file is
   static and hand-curated.
 - Macro-cycle forecasting; the market index is context only.
@@ -228,9 +238,13 @@ The model degrades gracefully per missing input, and says so in the UI:
 
 ## Risks
 
-- **PSA pop-report scraping fragility** — page structure changes break the
-  parser; mitigated by cached raw payloads, fixture-based tests, and
-  graceful staleness.
+- **`gem_rate` is a heuristic estimate, not measured data** — PSA and
+  GemRate are both confirmed Cloudflare-blocked (403/managed-challenge),
+  so this factor leans on community-known gem-rate ranges rather than real
+  population counts, and may drift from reality for newer sets with little
+  grading history yet. Mitigated by being one multiplier among several and
+  by the confidence band accounting for estimate-based inputs; schema is
+  ready to swap in real data from a paid source later.
 - **Pull-rate config is approximate** — community ratios, not official
   data; mitigated by per-set overrides and the factor being one multiplier
   among several.
