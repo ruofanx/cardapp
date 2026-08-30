@@ -3011,85 +3011,103 @@ git commit -m "feat: Fair Value panel on card Detail screen"
 
 ## Task 15: Frontend — Rankings screen
 
+**IMPORTANT — read the Global Constraints frontend-architecture note above
+first, and see Task 14's own note.** This targets the real, live
+`webapp/frontend/src/` Vite app, not the dead `webapp/static/*.jsx` tree.
+
 **Files:**
-- Modify: `webapp/static/api.jsx`
-- Create: `webapp/static/screens/Rankings.jsx`
-- Modify: `webapp/static/app.jsx`
-- Modify: `webapp/static/index.html`
+- Modify: `webapp/frontend/src/api.js`
+- Create: `webapp/frontend/src/screens/Rankings.jsx`
+- Modify: `webapp/frontend/src/app.jsx`
+- Modify: `webapp/frontend/src/screens/Browse.jsx`
 
 **Interfaces:**
 - Consumes: `GET /api/users/{user_id}/rankings` (Task 13)
-- Produces: `window.api.getRankings(userId, sort)`, a `RankingsScreen` registered in the nav stack as `'rankings'`
+- Produces: `api.getRankings(userId, sort)` (named export `api`'s method), a `RankingsScreen` default export registered in the nav stack as `'rankings'`
 
 - [ ] **Step 1: Add the API client method**
 
-In `webapp/static/api.jsx`, add to `P`:
+In `webapp/frontend/src/api.js`, add to `P` (near `cardPrediction`, added in Task 14):
 
 ```js
-    userRankings: (uid, sort) => `/api/users/${uid}/rankings?sort=${sort}`,
+  userRankings:        (uid, sort) => `/api/users/${uid}/rankings?sort=${sort}`,
 ```
 
-Add the method:
+Add the method to `export const api = { ... }`, matching this file's no-trailing-semicolon style:
 
 ```js
-    // Collection ranked by valuation gap / upside / grade EV.
-    // Returns { rankings: [] } on failure so the screen can show an empty state.
-    async getRankings(userId, sort = 'undervalued') {
-      if (!userId) return { rankings: [] };
-      try {
-        return await request(P.userRankings(userId, sort));
-      } catch (e) {
-        return { rankings: [] };
-      }
-    },
+  // Collection ranked by valuation gap / upside / grade EV.
+  // Returns { rankings: [] } on failure so the screen can show an empty state.
+  async getRankings(userId, sort = 'undervalued') {
+    if (!userId) return { rankings: [] }
+    try {
+      return await request(P.userRankings(userId, sort))
+    } catch (e) {
+      return { rankings: [] }
+    }
+  },
 ```
 
 - [ ] **Step 2: Create the Rankings screen**
 
-```jsx
-// webapp/static/screens/Rankings.jsx
-function RankingsScreen({ navigate, currentUserId }) {
-  const [sort, setSort] = React.useState('undervalued');
-  const [rows, setRows] = React.useState(null);
+This app's screens are ES modules with a default export, taking props from
+`app.jsx`'s `screenProps` object — there is no `currentUserId` prop; the
+active user is `currentUser` (a full user object), matching the pattern
+already used elsewhere (`reloadCollection: (uid) => reloadCollection(uid ?? currentUser?.id)`
+in `app.jsx`). The active-chip style is `.chip-strong` (defined in
+`styles.css`), not `.chip-active` — `.chip-active` doesn't exist in this
+codebase.
 
-  React.useEffect(() => {
-    let cancelled = false;
-    setRows(null);
-    (async () => {
-      const res = await window.api.getRankings(currentUserId, sort);
-      if (!cancelled) setRows(res.rankings || []);
-    })();
-    return () => { cancelled = true; };
-  }, [currentUserId, sort]);
+```jsx
+// webapp/frontend/src/screens/Rankings.jsx
+import { useEffect, useState } from 'react'
+import api from '../api.js'
+import { NavBar, NavBackButton, Price } from '../components.jsx'
+
+export default function RankingsScreen({ navigate, currentUser }) {
+  const [sort, setSort] = useState('undervalued')
+  const [rows, setRows] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setRows(null)
+    ;(async () => {
+      const res = await api.getRankings(currentUser?.id, sort)
+      if (!cancelled) setRows(res.rankings || [])
+    })()
+    return () => { cancelled = true }
+  }, [currentUser?.id, sort])
 
   return (
-    <div className="screen">
+    <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
       <NavBar title="Rankings" left={<NavBackButton onClick={() => navigate('__back')} />} />
       <div style={{ display: 'flex', gap: 8, padding: '8px 16px' }}>
         {['undervalued', 'upside', 'grade_ev'].map(s => (
-          <button key={s} className={`chip ${sort === s ? 'chip-active' : ''}`} onClick={() => setSort(s)}>
+          <button key={s} className={`chip ${sort === s ? 'chip-strong' : ''}`} onClick={() => setSort(s)}>
             {s === 'undervalued' ? 'Undervalued' : s === 'upside' ? 'Upside' : 'Grade EV'}
           </button>
         ))}
       </div>
       {rows === null ? (
-        <div style={{ padding: 16, color: '#64748b' }}>Loading…</div>
+        <div style={{ padding: 16, color: 'var(--ink-3)', fontSize: 14 }}>Loading…</div>
       ) : rows.length === 0 ? (
-        <div style={{ padding: 16, color: '#64748b' }}>
+        <div style={{ padding: 16, color: 'var(--ink-3)', fontSize: 14 }}>
           No ranked cards yet — open a few cards' Detail screens first so their fair-value features get computed.
         </div>
       ) : (
-        <div style={{ padding: '0 16px' }}>
+        <div style={{ padding: '0 16px', overflowY: 'auto' }}>
           {rows.map(r => (
-            <div key={r.card_id} className="card" style={{ padding: 12, marginTop: 8, cursor: 'pointer' }}
-                 onClick={() => navigate('detail', { id: r.card_id })}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div key={r.card_id} className="col" style={{
+              background: 'var(--bg-1)', borderRadius: 14, border: '1px solid var(--hairline-soft)',
+              padding: 12, marginTop: 8, cursor: 'pointer',
+            }} onClick={() => navigate('detail', { id: r.card_id })}>
+              <div className="row" style={{ justifyContent: 'space-between' }}>
                 <div style={{ fontWeight: 600 }}>{r.name}</div>
-                <Price usd={r.current_market_price} />
+                <Price usd={r.current_market_price} size="sm"/>
               </div>
-              <div style={{ fontSize: 13, color: '#64748b', marginTop: 2 }}>
-                Fair value <Price usd={r.fair_value} /> ({r.valuation_gap_pct > 0 ? '+' : ''}{r.valuation_gap_pct}%)
-                {r.grade_ev != null && <> · Grade EV <Price usd={r.grade_ev} sign /></>}
+              <div className="mono" style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>
+                Fair value <Price usd={r.fair_value} size="sm"/> ({r.valuation_gap_pct > 0 ? '+' : ''}{r.valuation_gap_pct}%)
+                {r.grade_ev != null && <> · Grade EV <Price usd={r.grade_ev} size="sm" sign/></>}
               </div>
             </div>
           ))}
@@ -3100,35 +3118,45 @@ function RankingsScreen({ navigate, currentUserId }) {
 }
 ```
 
-- [ ] **Step 3: Register the script tag**
+- [ ] **Step 3: Wire the route into the nav stack**
 
-In `webapp/static/index.html`, add a `<script type="text/babel" src="screens/Rankings.jsx">` line next to the existing screen script tags (same pattern as `Trade.jsx`/`Bulk.jsx`).
-
-- [ ] **Step 4: Wire the route into the nav stack**
-
-In `webapp/static/app.jsx`, add a case to the screen switch found earlier at `app.jsx:278-285`:
+In `webapp/frontend/src/app.jsx`, add an import near the other screen imports (around line 8-19):
 
 ```jsx
-    case 'rankings':  Screen = RankingsScreen; break;
+import RankingsScreen from './screens/Rankings.jsx'
 ```
 
-Add an entry point — a button on `BrowseScreen` (or `HomeScreen`) that calls `navigate('rankings')`. Since the exact placement depends on that screen's current layout, add it as a `NavBar` right-side action on Browse: find `BrowseScreen`'s `<NavBar .../>` call and add a right-side button:
+Add a case to the screen switch (around line 273-286):
 
 ```jsx
-right={<button className="tap" onClick={() => navigate('rankings')}>Rankings</button>}
+    case 'rankings':      Screen = RankingsScreen; break
 ```
 
-(If `BrowseScreen`'s `NavBar` already has a `right` action for something else, add this as a second element in that slot rather than replacing it.)
+Add an entry point in `webapp/frontend/src/screens/Browse.jsx`: its `NavBar`'s `right` slot already has two buttons (refresh + add, in a `<>...</>` fragment) — add a third:
 
-- [ ] **Step 5: Manual verification in the browser**
+```jsx
+right={<>
+  <button className="tap" onClick={() => navigate('rankings')} style={{ color: 'var(--ink-2)' }}><Icon name="arrow-up" size={20}/></button>
+  <button className="tap" onClick={() => reloadCollection && reloadCollection()} style={{ color: 'var(--ink-2)' }}><Icon name="refresh" size={20}/></button>
+  <button className="tap" onClick={() => navigate('scan')} style={{ color: 'var(--ink-2)' }}><Icon name="plus" size={22}/></button>
+</>}
+```
 
-Run: `cd webapp && ./run.sh`, open `http://localhost:8000/`, go to Browse, tap "Rankings".
-Expected: screen loads, sort chips switch between Undervalued/Upside/Grade EV, tapping a row navigates to that card's Detail screen. With no fitted model or no cards with computed features yet, the empty state message renders instead of a blank/broken screen.
+(`"arrow-up"` is a real, already-registered icon name in `components.jsx`'s `Icon` switch — verified directly, not assumed.)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Build and verify in the browser**
 
 ```bash
-git add webapp/static/api.jsx webapp/static/screens/Rankings.jsx webapp/static/app.jsx webapp/static/index.html
+cd webapp/frontend && npm run build
+```
+
+Then run the dev server, sign in, go to Browse, tap the new Rankings button.
+Expected: screen loads, sort chips switch between Undervalued/Upside/Grade EV (selected chip shows the `chip-strong` accent style), tapping a row navigates to that card's Detail screen. With no fitted model or no cards with computed features yet, the empty state message renders instead of a blank/broken screen. If a real logged-in navigation isn't reachable in your environment, an isolated component mount in a real browser (as used for Task 14's verification) is an acceptable substitute — say explicitly which one you did.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add webapp/frontend/src/api.js webapp/frontend/src/screens/Rankings.jsx webapp/frontend/src/app.jsx webapp/frontend/src/screens/Browse.jsx webapp/static/dist
 git commit -m "feat: Rankings screen for collection valuation/upside/grade-EV sorting"
 ```
 
