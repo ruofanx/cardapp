@@ -19,6 +19,13 @@ def test_months_since_release_uses_as_of_date():
     assert months_since_release("2024-01-01", as_of=date(2024, 7, 1)) == 6.0
 
 
+def test_months_since_release_accounts_for_day_of_month_difference():
+    # Release on Jan 1, as_of Jan 15: 14 days elapsed (~0.467 months).
+    # Locks in the day-fraction term's behavior for non-zero day differences.
+    result = months_since_release("2024-01-01", as_of=date(2024, 1, 15))
+    assert 0.4 < result < 0.5
+
+
 def test_build_card_features_happy_path():
     f = build_card_features(
         name="Charizard ex",
