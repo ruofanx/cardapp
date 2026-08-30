@@ -72,24 +72,45 @@ function ScanScreen({ tweaks, navigate, scanQueue, identifyCard, addToCollection
       // The EN-only catalogue search (Pokemon TCG API) returns nothing for
       // JP/CH card names typed directly off the physical card — those
       // names don't exist in its English database. Before giving up, try
-      // TCGdex's localized databases directly with the raw query text (no
-      // PokeAPI translation needed since the query IS already in that
-      // language). This is the only path that can find e.g. a Chinese-set
-      // card by its printed Chinese name.
+      // TCGdex's localized databases. Users usually type a free-text
+      // description in English ("chinese 151 collect pikachu 173", mirroring
+      // how they'd search eBay) rather than the printed native-script name —
+      // TCGdex does exact-name matching in that language's script, so the
+      // raw query only ever matches when it happens to already BE the native
+      // name. Find the real Pokémon name among the query's tokens and
+      // translate it via PokeAPI first (same mechanism as the "Widening
+      // search" step below) so the JA/ZH lookups have something that can
+      // actually match.
       if ((!found || found.length === 0) && !image && query.trim() && api?.searchTCGdex) {
         log('Widening (TCGdex)', `"${query.slice(0, 24)}" — no catalogue match`);
         const q = query.trim();
-        // TCGdex does exact-name matching. For EN queries the user often appends
-        // set/rarity modifiers ("bulbasaur first partner black star promo…") that
-        // aren't part of the Pokémon name — strip everything after the first word
-        // so we find "bulbasaur" instead of matching nothing. JP/ZH queries ARE
-        // the Pokémon name in full, so keep those unchanged.
-        const enName = q.split(/\s+/)[0];
+        const STOPWORDS = new Set([
+          'chinese', 'japanese', 'english', 'korean', 'jp', 'cn', 'zh', 'en',
+          'set', 'sets', 'collect', 'collection', 'card', 'cards', 'box',
+          'booster', 'pack', 'promo', 'exclusive', 'edition', 'holo',
+          'holofoil', 'reverse', 'rare', 'the', 'a', 'an', 'of',
+        ]);
+        const candidateTokens = q.split(/\s+/)
+          .filter(t => t.length >= 3 && !/^\d+$/.test(t) && !STOPWORDS.has(t.toLowerCase()));
+        // Fire PokeAPI lookups for every candidate token in parallel (cheap —
+        // lookupPokemonNames caches by token), then take the first one (in
+        // query order) that actually resolved to a real species name. Tokens
+        // that aren't Pokémon names (trainer names, rarity words we didn't
+        // think to stop-list, etc.) just come back null and are skipped —
+        // the stop-list above is an optimization, not the correctness check.
+        const nameAttempts = await Promise.allSettled(
+          candidateTokens.map(t => api.lookupPokemonNames?.(t))
+        );
+        let names = null;
+        for (const r of nameAttempts) {
+          if (r.status === 'fulfilled' && (r.value?.ja || r.value?.zh)) { names = r.value; break; }
+        }
+        const enName = names?.en || candidateTokens[0] || q.split(/\s+/)[0];
         const fallbackTasks = [
           ['TCGdex EN',    api.searchTCGdex({ name: enName }, { pageSize: 15, lang: 'en' })],
-          ['TCGdex JA',    api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ja', dbLang: 'ja' })],
-          ['TCGdex ZH-TW', api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-tw' })],
-          ['TCGdex ZH-CN', api.searchTCGdex({ name: q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-cn' })],
+          ['TCGdex JA',    api.searchTCGdex({ name: names?.ja || q }, { pageSize: 15, lang: 'ja', dbLang: 'ja' })],
+          ['TCGdex ZH-TW', api.searchTCGdex({ name: names?.zh || q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-tw' })],
+          ['TCGdex ZH-CN', api.searchTCGdex({ name: names?.zh || q }, { pageSize: 15, lang: 'ch', dbLang: 'zh-cn' })],
         ];
         const fallbackResults = await Promise.allSettled(fallbackTasks.map(([, p]) => p));
         const fallbackHits = [];
