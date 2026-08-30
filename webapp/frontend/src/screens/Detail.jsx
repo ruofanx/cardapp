@@ -1231,6 +1231,63 @@ function fmtChartDate(t) {
   return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+// Fair-value estimate for the card, sourced from the pricing prediction
+// model (GET /api/cards/{id}/prediction). Silently renders nothing when no
+// model has been fitted yet, the card's rarity is unmapped, or the card
+// isn't found — this is an optional enrichment, not a required feature.
+function FairValuePanel({ card }) {
+  const [pred, setPred] = useState(null);
+
+  React.useEffect(() => {
+    if (!card?.id) { setPred(null); return; }
+    let cancelled = false;
+    (async () => {
+      const res = await api.getPrediction(card.id);
+      if (!cancelled) setPred(res);
+    })();
+    return () => { cancelled = true; };
+  }, [card?.id]);
+
+  if (!pred) return null;
+
+  const fv = pred.fair_value;
+  const market = pred.current_market_price;
+  const gapPct = market != null ? ((market - fv.point_estimate) / fv.point_estimate) * 100 : null;
+  const badge = gapPct == null ? null : (gapPct > 10 ? 'Overvalued' : gapPct < -10 ? 'Undervalued' : 'Fair');
+  const badgeColor = badge === 'Undervalued' ? '#16a34a' : badge === 'Overvalued' ? '#dc2626' : 'var(--ink-3)';
+
+  return (
+    <>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 20, marginBottom: 8 }}>
+        Fair Value
+      </div>
+      <div className="col" style={{ background: 'var(--bg-1)', borderRadius: 14, border: '1px solid var(--hairline-soft)', overflow: 'hidden' }}>
+        <div className="row" style={{ padding: '12px 14px', alignItems: 'baseline' }}>
+          <div style={{ flex: 1 }}>
+            <Price usd={fv.point_estimate} size="sm"/>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginLeft: 8 }}>
+              (<Price usd={fv.low} size="sm"/>–<Price usd={fv.high} size="sm"/>)
+            </span>
+          </div>
+          {badge && (
+            <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: badgeColor }}>{badge}</div>
+          )}
+        </div>
+        {pred.grade_worthiness && (
+          <div className="row" style={{ padding: '12px 14px', borderTop: '1px solid var(--hairline-soft)' }}>
+            <div style={{ flex: 1, color: 'var(--ink-3)', fontSize: 13 }}>
+              {pred.grade_worthiness.worth_grading ? 'Worth grading' : 'Not worth grading'}
+            </div>
+            <div className="mono" style={{ fontSize: 13, color: pred.grade_worthiness.worth_grading ? '#16a34a' : 'var(--ink-4)' }}>
+              EV <Price usd={pred.grade_worthiness.expected_value} size="sm" sign/>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function PricePointChart({ points, w = 358, h = 160, windowStart = null }) {
   // Hovered (desktop) or tapped (touch) dot index — shows a date+price tooltip.
   const [activeIdx, setActiveIdx] = React.useState(null);
@@ -1505,6 +1562,8 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
           }}>{r}</button>
         ))}
       </div>
+
+      <FairValuePanel card={card} />
 
       {/* Price snapshot — what we actually know about the current quote */}
       <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8 }}>Price snapshot</div>

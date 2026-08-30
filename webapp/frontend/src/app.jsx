@@ -17,6 +17,7 @@ import WantListScreen from './screens/WantList.jsx'
 import TradeShowScreen from './screens/TradeShow.jsx'
 import AlertsScreen from './screens/Alerts.jsx'
 import InsightsScreen from './screens/Insights.jsx'
+import RankingsScreen from './screens/Rankings.jsx'
 
 const TWEAK_DEFAULTS = {
   "theme": "dark",
@@ -268,7 +269,7 @@ export default function App() {
     },
   }
 
-  const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan' || top.screen === 'want-list' || top.screen === 'add-profile' || top.screen === 'trade-show' || top.screen === 'alerts' || top.screen === 'insights'
+  const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan' || top.screen === 'want-list' || top.screen === 'add-profile' || top.screen === 'trade-show' || top.screen === 'alerts' || top.screen === 'insights' || top.screen === 'rankings'
 
   if (!authed) {
     return <LoginScreen onLogin={handleLogin} />
@@ -306,6 +307,7 @@ function screenComponentFor(name) {
     case 'trade-show':   return TradeShowScreen
     case 'alerts':       return AlertsScreen
     case 'insights':     return InsightsScreen
+    case 'rankings':     return RankingsScreen
     default:              return HomeScreen
   }
 }

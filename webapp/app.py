@@ -17,6 +17,7 @@ Static frontend served from ./static/index.html at /.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import sys
 import os
@@ -61,6 +62,9 @@ import card_lookup
 import pricecharting_lookup
 import ebay_lookup
 import raw_price_resolver
+import pricing_model.db as pricing_db
+from pricing_model.features import build_card_features, months_since_release
+from pricing_model.predict import grade_worthiness, predict_psa10_price, predict_raw_price
 
 app = FastAPI(title="Pokemon Trading Claude")
 
@@ -83,6 +87,10 @@ def _startup():
             db.run_migrations()
     except Exception as e:
         log.warning("schema migration failed: %s", e)
+    try:
+        pricing_db.init_db()
+    except Exception as e:
+        log.warning("pricing_model database initialization failed: %s", e)
     # Start the daily refresh scheduler (7am CT). Safe if already running.
     try:
         from refresh_job import start_scheduler
@@ -668,6 +676,217 @@ def card_price_history(card_id: int, since: Optional[str] = None,
         "current":  card.current_market_price,
         "currency": "USD",
     }
+
+
+async def _resolve_rarity_and_release_date(card: "db.Card") -> tuple[Optional[str], Optional[str]]:
+    """Resolve (rarity_raw, release_date) for a collection card via the
+    existing lookup modules. Returns (None, None) if either can't be found —
+    callers must degrade gracefully (see spec Error handling)."""
+    if card.language == "japanese":
+        import tcgdex_lookup
+        result = await tcgdex_lookup.lookup_jp_card(card.name, card.set_name)
+        if result is None:
+            return None, None
+        release_date = await _resolve_jp_set_release_date(card.set_name)
+        return result.rarity, release_date
+    if card.language == "chinese":
+        # No rarity source exists for Chinese-exclusive cards anywhere in
+        # this codebase yet (tcgdex_lookup.py is hardcoded to the /v2/ja
+        # endpoint; card_lookup.py is EN-only via pokemontcg.io). Returning
+        # (None, None) here is the honest degraded state — the endpoint
+        # below turns this into a 422 rather than guessing from an EN
+        # lookup that wouldn't actually match a CN-exclusive card.
+        return None, None
+    # search_cards is a free-text parser, NOT Lucene -- it does not accept
+    # `field:"value"` syntax. Passing that as literal text falls through its
+    # fallback chain and can return a candidate from ANY set (ordered by
+    # release date), which would silently cache the WRONG print's rarity.
+    # Plain free text + explicit post-hoc set matching avoids that; skip live
+    # price fetching too, since a rarity lookup has no use for it (also
+    # avoids an unnecessary PriceCharting scrape on every first prediction).
+    candidates = await card_lookup.search_cards(
+        f"{card.name} {card.set_name}", limit=5, attach_live_prices=False,
+    )
+    match = next(
+        (c for c in candidates if (c.set_name or "").strip().lower() == (card.set_name or "").strip().lower()),
+        None,
+    )
+    if match is None:
+        return None, None
+    rarity = match.rarity
+    release_date = await _resolve_set_release_date(card.set_name)
+    return rarity, release_date
+
+
+async def _resolve_set_release_date(set_name: str) -> Optional[str]:
+    """EN sets: query Pokemon TCG API's /v2/sets by name. Returns
+    'YYYY-MM-DD' or None if the set can't be resolved (an unrecognized EN
+    set name — the caller returns 422 rather than guessing)."""
+    import httpx
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(
+                "https://api.pokemontcg.io/v2/sets",
+                params={"q": f'name:"{set_name}"'},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return None
+    data = resp.json().get("data") or []
+    if not data:
+        return None
+    return data[0].get("releaseDate", "").replace("/", "-") or None
+
+
+async def _resolve_jp_set_release_date(set_name: str) -> Optional[str]:
+    """JP sets: resolve via tcgdex_lookup's existing set-id mapping, then
+    query TCGdex's set endpoint for releaseDate.
+
+    A live call to api.tcgdex.net from this dev sandbox timed out at the TCP
+    level (confirmed via `nc -zv api.tcgdex.net 443`, while other hosts,
+    including tcgdex.net's apex domain, connected fine) -- an environment
+    network restriction, not a code issue. In lieu of a live response, the
+    `.get("releaseDate")` shape below was confirmed against the official
+    TCGdex Python SDK (github.com/tcgdex/python-sdk): its `Set` model types
+    `releaseDate` as a plain `str` ("the Set release date as yyyy-mm-dd"),
+    and its own recorded API-response test fixtures
+    (tests/.fixtures/test_set.yaml, test_get_full_set.yaml) show real
+    GET /v2/en/sets/{id} bodies containing a top-level
+    `"releaseDate":"2024-10-30"` (and `"2019-11-15"` in the other fixture) --
+    a plain string, not nested. Re-run the live snippet below once network
+    access to api.tcgdex.net is available, to confirm the /ja/ endpoint
+    matches (no reason to expect otherwise, since sibling fields like `name`
+    already resolve to plain per-language strings through this same
+    language-scoped endpoint elsewhere in tcgdex_lookup.py).
+    """
+    import tcgdex_lookup
+    set_id = tcgdex_lookup._resolve_set_id(set_name)
+    if not set_id:
+        return None
+    import httpx
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{tcgdex_lookup.TCGDEX_BASE}/sets/{set_id}")
+            resp.raise_for_status()
+        except httpx.HTTPError:
+            return None
+    release = resp.json().get("releaseDate")
+    return release or None
+
+
+@app.get("/api/cards/{card_id}/prediction")
+async def card_prediction(card_id: int):
+    """Fair-value prediction for one card: point estimate + band, factor
+    breakdown, grade-worthiness (raw cards only). 404 if the card doesn't
+    exist; 503 if no model has been fit yet (corpus backfill not run)."""
+    card = db.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "card not found")
+
+    run = pricing_db.get_latest_model_run()
+    if run is None:
+        raise HTTPException(503, "pricing model not yet fitted — run backfill_pricing_corpus.py")
+
+    features = pricing_db.get_card_features(card_id)
+    if features is None:
+        rarity_raw, release_date = await _resolve_rarity_and_release_date(card)
+        if rarity_raw is None or release_date is None:
+            raise HTTPException(422, "insufficient card data to build a prediction (rarity or release date unresolved)")
+        features = build_card_features(
+            name=card.name, set_name=card.set_name or "", card_number=card.card_number or "",
+            rarity_raw=rarity_raw, language=card.language, release_date=release_date,
+            # Must match pricing_model.model's FIXED_CARDS_IN_TIER (always 1)
+            # -- training and prediction have to agree on this or predicted
+            # prices skew arbitrarily against what the model learned.
+            cards_in_tier=1,
+        )
+        if features is None:
+            raise HTTPException(422, f"unmapped rarity {rarity_raw!r} — no prediction available")
+        pricing_db.upsert_card_features(card_id, features)
+
+    # months_since_release is the model's only time-varying term. A cached
+    # `features` row can be arbitrarily old (computed whenever this card's
+    # Detail screen was first opened) -- recompute it from release_date
+    # every call so the lifecycle multiplier doesn't silently go stale.
+    # Freshly-built features above already have a correct value, so this is
+    # a harmless no-op in that branch (release_date hasn't changed).
+    features = dataclasses.replace(features, months_since_release=months_since_release(features.release_date))
+
+    raw_pred = predict_raw_price(features, run)
+    psa10_pred = predict_psa10_price(features, run)
+    ev = None if card.is_graded else grade_worthiness(features, run)
+
+    return {
+        "fair_value": {
+            "point_estimate": round(raw_pred.point_estimate, 2),
+            "low": round(raw_pred.low, 2),
+            "high": round(raw_pred.high, 2),
+            "breakdown": {k: round(v, 3) for k, v in raw_pred.breakdown.items()},
+            "confidence": "high" if features.language == "english" else
+                          ("medium" if features.language == "japanese" else "low"),
+        },
+        "psa10_fair_value": None if psa10_pred is None else {
+            "point_estimate": round(psa10_pred.point_estimate, 2),
+            "low": round(psa10_pred.low, 2),
+            "high": round(psa10_pred.high, 2),
+        },
+        "lifecycle": {
+            "months_since_release": features.months_since_release,
+            "multiplier": raw_pred.lifecycle_multiplier,
+        },
+        "grade_worthiness": None if ev is None else {
+            "expected_value": round(ev.expected_value, 2),
+            "worth_grading": ev.worth_grading,
+            "predicted_psa10": round(ev.predicted_psa10, 2),
+            "gem_rate_estimate": round(ev.gem_rate, 3),
+        },
+        "current_market_price": card.current_market_price,
+        "model_fitted_at": run.fitted_at,
+    }
+
+
+@app.get("/api/users/{user_id}/rankings")
+def user_rankings(user_id: int, sort: str = "undervalued",
+                   account: dict = Depends(get_current_account)):
+    """Rank a user's collection by valuation gap, combined upside, or grade
+    EV. Cards with no stored features (never viewed via the prediction
+    endpoint yet) are silently skipped rather than erroring — this is a
+    best-effort view over whatever's already been computed."""
+    run = pricing_db.get_latest_model_run()
+    if run is None:
+        return {"rankings": []}
+
+    cards = db.list_cards(user_id)
+    rows = []
+    for card in cards:
+        features = pricing_db.get_card_features(card.id)
+        if features is None or card.current_market_price is None:
+            continue
+        # See the matching comment in card_prediction() above: a cached
+        # features row can be arbitrarily old, so months_since_release must
+        # be recomputed from release_date on every call, not trusted as-is.
+        features = dataclasses.replace(features, months_since_release=months_since_release(features.release_date))
+        raw_pred = predict_raw_price(features, run)
+        gap_pct = (card.current_market_price - raw_pred.point_estimate) / raw_pred.point_estimate * 100
+        ev = None if card.is_graded else grade_worthiness(features, run)
+        rows.append({
+            "card_id": card.id,
+            "name": card.name,
+            "current_market_price": card.current_market_price,
+            "fair_value": round(raw_pred.point_estimate, 2),
+            "valuation_gap_pct": round(gap_pct, 1),
+            "grade_ev": None if ev is None else round(ev.expected_value, 2),
+        })
+
+    if sort == "grade_ev":
+        rows = [r for r in rows if r["grade_ev"] is not None]
+        rows.sort(key=lambda r: r["grade_ev"], reverse=True)
+    elif sort == "upside":
+        rows.sort(key=lambda r: -r["valuation_gap_pct"])
+    else:  # "undervalued" (default) — most negative gap (cheapest vs. fair value) first
+        rows.sort(key=lambda r: r["valuation_gap_pct"])
+
+    return {"rankings": rows}
 
 
 def _sync_card_tags(card: "db.Card", desired_names: list[str]):

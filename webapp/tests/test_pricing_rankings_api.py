@@ -1,0 +1,139 @@
+# webapp/tests/test_pricing_rankings_api.py
+from __future__ import annotations
+
+import math
+import os
+
+os.environ["PRICING_MODEL_DB"] = "/tmp/test_rankings_api_pm.sqlite"
+
+import pytest
+from fastapi.testclient import TestClient
+
+import app as app_module
+import pricing_model.db as pmdb
+from auth import get_current_account
+from pricing_model.features import CardFeatures
+
+_FAKE_ACCOUNT = {"id": "test-account-id", "email": "test@example.com", "plan": "free", "trial_ends_at": None}
+
+
+@pytest.fixture(autouse=True)
+def fresh_pricing_db():
+    if pmdb.DB_PATH.exists():
+        pmdb.DB_PATH.unlink()
+    pmdb.init_db()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def fake_auth():
+    """/api/users/{user_id}/rankings now requires get_current_account (Fix 4
+    of the final-review pass). Override the dependency with a minimal fake
+    account rather than exercising real Supabase JWT verification, matching
+    FastAPI's standard TestClient auth-bypass pattern -- this codebase has no
+    existing convention for authenticated-endpoint tests (test_auth.py only
+    unit-tests get_current_account directly, not through an endpoint)."""
+    app_module.app.dependency_overrides[get_current_account] = lambda: _FAKE_ACCOUNT
+    yield
+    app_module.app.dependency_overrides.pop(get_current_account, None)
+
+
+def _fake_card(card_id: int, **overrides):
+    fields = dict(
+        id=card_id, user_id=1, name="Card", set_name="Set", card_number="1",
+        language="english", condition="NM", is_graded=False,
+        grade_company=None, grade=None, purchase_price=None, purchase_date=None,
+        current_market_price=None, last_priced_at=None, image_url=None,
+        photo_path=None, notes=None, created_at=None, product_type="card",
+    )
+    fields.update(overrides)
+    return app_module.db.Card(**fields)
+
+
+def test_rankings_sorts_by_undervalued_by_default(monkeypatch):
+    client = TestClient(app_module.app)
+
+    cheap = _fake_card(1, name="Card Cheap", current_market_price=5.0)   # << fair value -> undervalued
+    pricey = _fake_card(2, name="Card Pricey", card_number="2", current_market_price=500.0)  # >> fair value -> overvalued
+    monkeypatch.setattr(app_module.db, "list_cards", lambda uid: [cheap, pricey])
+
+    for c in (cheap, pricey):
+        pmdb.upsert_card_features(c.id, CardFeatures(
+            canonical_rarity="rare_holo", pull_scarcity=1.0, gem_rate=0.5,
+            character_tier="C", is_trainer_art=False, language="english",
+            era="sv", release_date="2024-01-01", months_since_release=12.0,
+        ))
+    run = pmdb.ModelRun(
+        id=None, fitted_at="", coefficients_raw={"intercept": math.log(50.0)},
+        coefficients_psa10={}, lifecycle_curve={}, market_index={},
+        psa9_fraction=0.4, residual_std_raw=0.2, residual_std_psa10=0.0,
+        r_squared_raw=0.7, r_squared_psa10=0.0, n_cards=500,
+    )
+    pmdb.save_model_run(run)
+
+    resp = client.get("/api/users/1/rankings?sort=undervalued")
+    assert resp.status_code == 200
+    body = resp.json()
+    ids_in_order = [row["card_id"] for row in body["rankings"]]
+    assert ids_in_order[0] == cheap.id  # most undervalued first
+
+
+def test_rankings_recomputes_stale_months_since_release(monkeypatch):
+    """Regression for the final-review finding that shipped only half-fixed:
+    /prediction recomputes months_since_release from release_date on every
+    call (app.py's card_prediction, via dataclasses.replace), but /rankings
+    was still trusting whatever was cached whenever the card's features were
+    first built. A card whose features were cached long ago carries a stale
+    months_since_release that no longer matches its (bin-dependent) lifecycle
+    stage, so its fair_value silently drifts from what /prediction reports
+    for the very same cached row."""
+    client = TestClient(app_module.app)
+
+    card = _fake_card(1, name="Old Cache", current_market_price=50.0)
+    monkeypatch.setattr(app_module.db, "list_cards", lambda uid: [card])
+
+    # release_date is old enough to always land in the open-ended "36+" bin
+    # (matches the existing convention in test_pricing_model.py:164, so this
+    # never expires the way a bounded-bin date literal would as real time
+    # advances). months_since_release cached at 1.0 -> stale bin is "0-3".
+    # The two bins carry very different lifecycle multipliers below, so
+    # trusting the stale value produces a visibly different fair_value.
+    release_date = "2015-01-01"  # old enough to always land in the "36+" bin
+    pmdb.upsert_card_features(1, CardFeatures(
+        canonical_rarity="rare_holo", pull_scarcity=1.0, gem_rate=0.5,
+        character_tier="C", is_trainer_art=False, language="english",
+        era="sv", release_date=release_date, months_since_release=1.0,
+    ))
+    run = pmdb.ModelRun(
+        id=None, fitted_at="", coefficients_raw={"intercept": math.log(50.0)},
+        coefficients_psa10={}, lifecycle_curve={"0-3": 2.0, "36+": 0.5},
+        market_index={}, psa9_fraction=0.4, residual_std_raw=0.2,
+        residual_std_psa10=0.0, r_squared_raw=0.7, r_squared_psa10=0.0, n_cards=500,
+    )
+    pmdb.save_model_run(run)
+
+    resp = client.get("/api/users/1/rankings")
+    assert resp.status_code == 200
+    fair_value = resp.json()["rankings"][0]["fair_value"]
+
+    # Expected: fair_value computed from the *current* age-derived bin
+    # ("36+" -> 0.5x), not the stale cached bin ("0-3" -> 2.0x).
+    assert fair_value == pytest.approx(25.0, abs=0.5)
+
+
+def test_rankings_skips_cards_without_features_silently(monkeypatch):
+    client = TestClient(app_module.app)
+    no_features_card = _fake_card(1, name="No Features Card")
+    monkeypatch.setattr(app_module.db, "list_cards", lambda uid: [no_features_card])
+
+    run = pmdb.ModelRun(
+        id=None, fitted_at="", coefficients_raw={"intercept": 1.0}, coefficients_psa10={},
+        lifecycle_curve={}, market_index={}, psa9_fraction=0.4,
+        residual_std_raw=0.2, residual_std_psa10=0.0, r_squared_raw=0.7,
+        r_squared_psa10=0.0, n_cards=500,
+    )
+    pmdb.save_model_run(run)
+
+    resp = client.get("/api/users/1/rankings")
+    assert resp.status_code == 200
+    assert resp.json()["rankings"] == []

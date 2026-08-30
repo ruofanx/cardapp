@@ -1,7 +1,7 @@
 # PokeCollect — CardApp
 
 Pokemon card collection tracker + trade tool for Ro, Reid, and Ryan.
-FastAPI backend + React/Babel PWA frontend, served together on port 8000.
+FastAPI backend + React/Vite PWA frontend, served together on port 8000.
 
 ## Project layout
 
@@ -22,14 +22,17 @@ FastAPI backend + React/Babel PWA frontend, served together on port 8000.
 │   ├── price_history_refresh.py # PriceCharting chart-data → price_history (weekly job + manual backfill)
 │   ├── trade_proposer.py    # Subset-sum trade matcher
 │   ├── run.sh               # Start server: uvicorn app:app --reload --port 8000
+│   ├── pricing_model/        # Fair-value prediction model (see Pricing prediction model)
+│   ├── backfill_pricing_corpus.py  # One-off CLI: harvest the pricing_model training corpus
 │   ├── pokemon_trading.sqlite      # Main DB (gitignored)
 │   ├── ebay_cache.sqlite           # 24h eBay cache (gitignored)
 │   ├── pricecharting_cache.sqlite  # 24h PC cache (gitignored)
+│   ├── pricing_model.sqlite        # Pricing model corpus + fitted runs (gitignored)
 │   ├── uploads/             # User card photos (gitignored)
 │   ├── frontend/            # REAL frontend source — Vite + React, builds to static/dist/
 │   │   ├── src/
 │   │   │   ├── api.js, app.jsx, components.jsx, data.js, Login.jsx
-│   │   │   └── screens/     # Detail.jsx, Browse.jsx, Home.jsx, Scan.jsx, Insights.jsx, ...
+│   │   │   └── screens/     # Detail.jsx, Browse.jsx, Home.jsx, Scan.jsx, Rankings.jsx, ...
 │   │   ├── vite.config.js   # outDir: ../static/dist (see Frontend architecture)
 │   │   └── node_modules/    # gitignored — `npm install` here before `npm run build`
 │   └── static/
@@ -79,8 +82,10 @@ fixed 2026-06-07 by reordering the mounts.)
 | POST | `/api/sold-listings` | eBay sold listings for a card |
 | POST | `/api/trade/propose` | Subset-sum trade proposal |
 | POST | `/api/refresh-prices/run-now` | Trigger full refresh |
+| GET | `/api/cards/{id}/prediction` | Fair-value prediction (see Pricing prediction model) |
+| GET | `/api/users/{uid}/rankings` | Collection ranked by valuation gap / upside / grade EV |
 
-**refresh-price quirk:** returns `{estimated_price, source, image_url}` but does NOT update the DB. `api.jsx` POSTs here then PATCHes `/api/cards/{id}` separately.
+**refresh-price quirk:** returns `{estimated_price, source, image_url}` but does NOT update the DB. `api.js` POSTs here then PATCHes `/api/cards/{id}` separately.
 
 ## Pricing logic
 
@@ -135,20 +140,70 @@ CGC/BGS/SGC: half-grades + a 10.5 sentinel for top grades:
 - BGS 10.5 = BGS 10 Black Label
 - SGC 10.5 = SGC 10 Pristine
 
+## Pricing prediction model (`webapp/pricing_model/`)
+
+A separate fundamentals-based fair-value model — not the current-market-price
+pipeline above. Given a card's rarity, era, language, pull scarcity, character
+tier, and age-since-release, it predicts what the card *should* trade for
+(raw and PSA10), with a confidence band and a per-factor multiplier
+breakdown, plus a grade-worthiness EV. Exposed via `GET
+/api/cards/{id}/prediction` and `GET /api/users/{id}/rankings` (the latter
+ranks a user's collection by valuation gap / upside / grade EV; both require
+auth).
+
+Model core (`model.py`): a chain-linked market index (captures "everything
+moved together"), a median-polish lifecycle curve (age-dependent
+hype→trough→recovery shape), and a cross-sectional ridge regression on the
+remaining fundamentals — see the module's docstrings for why each stage is
+built the way it is (naive per-card anchoring biases both the index and the
+curve under PriceCharting's calendar-anchored, not release-anchored, history
+window).
+
+Storage: `webapp/pricing_model.sqlite`, a dedicated SQLite file — deliberately
+separate from `db.py`/`db_postgres.py` (the main app db has a SQLite/Postgres
+split depending on environment, which would make a shared file ambiguous;
+this follows the same one-file-per-subsystem precedent as
+`pricecharting_cache.sqlite`). `pricing_model.db.init_db()` runs at app
+startup and is idempotent — safe to call repeatedly.
+
+**Production deploy requirement:** unlike the 24h-TTL caches it's modeled
+after, this file holds the fitted model + harvested training corpus, which
+are expensive to rebuild. On Railway (no committed volume config —
+`DB_PATH` just resolves to a path under the app directory by default),
+mount a persistent volume and set `PRICING_MODEL_DB=<mount-path>/pricing_model.sqlite`
+so it survives redeploys instead of resetting every time (which would
+otherwise 503 `/api/cards/{id}/prediction` and `/api/users/{id}/rankings`
+until `backfill_pricing_corpus.py` is rerun and the monthly refit fires).
+
+Training corpus: one-time backfill via `backfill_pricing_corpus.py` (harvests
+Pokemon TCG API + PriceCharting into `corpus_cards`/`corpus_history`), then a
+monthly scheduled refit (`refresh_job.py` → `pricing_model.jobs.monthly_refit`,
+1st of the month @ 5am CT) that re-harvests and re-fits, keeping the previous
+model run active if the new fit's R² regresses.
+
 ## Frontend architecture
 
 **The live app is a Vite build, not Babel-standalone.** Real source is
 `webapp/frontend/src/` (React 18, custom navigation stack in `app.jsx`, no
 React Router). `webapp/frontend/vite.config.js` builds it to
-`webapp/static/dist/`, which is what FastAPI's `StaticFiles` mount actually
-serves at `/` — `index.html` there references hashed `/assets/index-*.js`
-bundles, regenerated (new hashes) on every build.
+`webapp/static/dist/`, which is what FastAPI's catch-all `StaticFiles`
+mount (the `STATIC_DIR` resolution near the bottom of `app.py`) actually
+serves at `/` whenever `dist/index.html` exists, falling back to plain
+`webapp/static/` only if it doesn't — `index.html` there references
+hashed `/assets/index-*.js` bundles, regenerated (new hashes) on every
+build. For local dev, run `npm run dev` in `frontend/` (Vite dev server)
+or just build once and let `:8000` serve the `dist/` output — either way,
+`:8000` remains the only backend to run.
 
 `webapp/static/screens/*.jsx` + top-level `.jsx` files (the old
 Babel-standalone, no-build-step frontend, transpiled in-browser via
-`<script type=text/babel>`) are **legacy and no longer served** — confirmed
-2026-08-29 when a fix applied only there had no effect live. Don't edit them
-expecting changes to appear; edit `webapp/frontend/src/` instead.
+`<script type=text/babel>`) are **legacy and no longer served** —
+confirmed 2026-08-29 when a fix applied only there had no effect live.
+Don't edit them expecting changes to appear; edit `webapp/frontend/src/`
+instead. This exact mistake already happened twice on the
+pricing-prediction-model plan (the Fair Value panel and the Rankings
+screen were both first built against `static/*.jsx` before being redone
+against `frontend/src/`).
 
 After editing anything under `webapp/frontend/src/`, you MUST rebuild and
 commit the output (`webapp/static/dist/` is checked into git, not
@@ -197,7 +252,7 @@ view. Toggle entry points: Scan result screen + Detail screen star button.
 When backend is unreachable, `app.jsx` sets `backend.online = false`,
 fills collection with `window.CARDS` mock data, shows an orange offline banner.
 
-### Backend URL resolution (api.jsx)
+### Backend URL resolution (api.js)
 1. `window.POKECOLLECT_API` (set before scripts load)
 2. `window.location.hostname:8000`
 3. `localhost:8000`
