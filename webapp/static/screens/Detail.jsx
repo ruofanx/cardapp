@@ -1205,6 +1205,59 @@ function fmtChartDate(t) {
   return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+// Fair-value estimate for the card, sourced from the pricing prediction
+// model (GET /api/cards/{id}/prediction). Silently renders nothing when no
+// model has been fitted yet, the card's rarity is unmapped, or the card
+// isn't found — this is an optional enrichment, not a required feature.
+function FairValuePanel({ card }) {
+  const [pred, setPred] = useStateDetail(null);
+
+  React.useEffect(() => {
+    if (!card?.id || !window.api?.getPrediction) { setPred(null); return; }
+    let cancelled = false;
+    (async () => {
+      const res = await window.api.getPrediction(card.id);
+      if (!cancelled) setPred(res);
+    })();
+    return () => { cancelled = true; };
+  }, [card?.id]);
+
+  if (!pred) return null;
+
+  const fv = pred.fair_value;
+  const market = pred.current_market_price;
+  const gapPct = market != null ? ((market - fv.point_estimate) / fv.point_estimate) * 100 : null;
+  const badge = gapPct == null ? null : (gapPct > 10 ? 'Overvalued' : gapPct < -10 ? 'Undervalued' : 'Fair');
+
+  return (
+    <div className="card" style={{ padding: 16, marginTop: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div style={{ fontWeight: 600 }}>Fair Value</div>
+        {badge && (
+          <span style={{
+            fontSize: 12, padding: '2px 8px', borderRadius: 999,
+            background: badge === 'Undervalued' ? '#dcfce7' : badge === 'Overvalued' ? '#fee2e2' : '#f1f5f9',
+            color: badge === 'Undervalued' ? '#166534' : badge === 'Overvalued' ? '#991b1b' : '#475569',
+          }}>{badge}</span>
+        )}
+      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>
+        <Price usd={fv.point_estimate} />
+        <span style={{ fontSize: 13, fontWeight: 400, color: '#64748b', marginLeft: 8 }}>
+          (<Price usd={fv.low} /> – <Price usd={fv.high} />)
+        </span>
+      </div>
+      {pred.grade_worthiness && (
+        <div style={{ fontSize: 13, marginTop: 8, color: pred.grade_worthiness.worth_grading ? '#166534' : '#64748b' }}>
+          {pred.grade_worthiness.worth_grading ? 'Worth grading — ' : 'Not worth grading — '}
+          estimated EV <Price usd={pred.grade_worthiness.expected_value} sign />
+          {' '}(est. gem rate {(pred.grade_worthiness.gem_rate_estimate * 100).toFixed(0)}%)
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PricePointChart({ points, w = 358, h = 160, windowStart = null }) {
   // Hovered (desktop) or tapped (touch) dot index — shows a date+price tooltip.
   const [activeIdx, setActiveIdx] = React.useState(null);
@@ -1444,6 +1497,7 @@ function OverviewTab({ card, cur, points, view, refreshing, onRefresh }) {
         ) : hasSeries ? (
           <>
             <PricePointChart points={activePts} w={358} h={160} windowStart={chartWindowStart}/>
+            <FairValuePanel card={card} />
             <div className="mono" style={{ position: 'absolute', top: 4, right: 6, fontSize: 11, color: 'var(--ink-3)' }}>
               high {fmtUSD(max, { decimals: 0 })}
             </div>
