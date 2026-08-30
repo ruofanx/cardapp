@@ -2238,38 +2238,60 @@ git commit -m "feat: monthly pricing-model refit job with fit-quality guard"
 
 - [ ] **Step 1: Write the failing test**
 
+**Test design note:** `app.py` does `try: import db_postgres as db except: import db` at
+module load — in a dev venv with `psycopg2-binary` installed (per
+`requirements.txt`), `app.db` is `db_postgres` regardless of whether
+`DATABASE_URL` is set, so a test that seeds data through a separately
+imported `db` (SQLite) module and then hits the endpoint via `TestClient`
+would be seeding a different database than the one the endpoint reads.
+The established pattern in this repo (`tests/test_billing_webhook.py`)
+sidesteps this by monkeypatching functions directly on `app_module.db`
+rather than relying on a real round trip through whichever backend loaded.
+Follow that pattern here, using `app_module.db.Card(...)` (not a
+separately-imported `db.Card`) so the fake card's shape matches whichever
+`Card` dataclass is actually active. `pricing_model.db` (this plan's own
+dedicated SQLite file) has no such ambiguity — it's exercised for real, as
+in Task 6.
+
 ```python
 # webapp/tests/test_pricing_prediction_api.py
 from __future__ import annotations
 
+import math
 import os
-import sys
 from unittest.mock import AsyncMock, patch
 
-os.environ["POKEMON_DB"] = "/tmp/test_prediction_api.sqlite"
 os.environ["PRICING_MODEL_DB"] = "/tmp/test_prediction_api_pm.sqlite"
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from fastapi.testclient import TestClient
 
-import db
+import app as app_module
 import pricing_model.db as pmdb
 
 
 @pytest.fixture(autouse=True)
-def fresh_dbs():
-    for path in (db.DB_PATH, pmdb.DB_PATH):
-        if path.exists():
-            path.unlink()
-    db.init_db()
+def fresh_pricing_db():
+    if pmdb.DB_PATH.exists():
+        pmdb.DB_PATH.unlink()
     pmdb.init_db()
     yield
 
 
+def _fake_card(card_id: int, **overrides):
+    fields = dict(
+        id=card_id, user_id=1, name="Charizard ex", set_name="Surging Sparks",
+        card_number="199/191", language="english", condition="NM",
+        is_graded=False, grade_company=None, grade=None,
+        purchase_price=None, purchase_date=None, current_market_price=120.0,
+        last_priced_at=None, image_url=None, photo_path=None, notes=None,
+        created_at=None, product_type="card",
+    )
+    fields.update(overrides)
+    return app_module.db.Card(**fields)
+
+
 def _seed_model_run():
-    import math
     run = pmdb.ModelRun(
         id=None, fitted_at="", coefficients_raw={"intercept": math.log(20.0)},
         coefficients_psa10={"intercept": math.log(80.0)},
@@ -2280,25 +2302,17 @@ def _seed_model_run():
     pmdb.save_model_run(run)
 
 
-def test_prediction_endpoint_returns_fair_value_for_known_card():
-    from app import app
-    client = TestClient(app)
-
-    user = db.list_users()[0]
-    card = db.create_card(db.Card(
-        id=None, user_id=user.id, name="Charizard ex", set_name="Surging Sparks",
-        card_number="199/191", language="english",
-    ))
+def test_prediction_endpoint_returns_fair_value_for_known_card(monkeypatch):
+    client = TestClient(app_module.app)
+    card = _fake_card(1)
+    monkeypatch.setattr(app_module.db, "get_card", lambda cid: card if cid == 1 else None)
     _seed_model_run()
 
-    fake_card_result = type("R", (), {
-        "rarity": "Special Illustration Rare",
-    })()
+    fake_card_result = type("R", (), {"rarity": "Special Illustration Rare"})()
 
     with patch("card_lookup.search_cards", new=AsyncMock(return_value=[fake_card_result])), \
-         patch("pricing_model.features.months_since_release", return_value=6.0), \
-         patch("app._resolve_set_release_date", new=AsyncMock(return_value="2024-11-08")):
-        resp = client.get(f"/api/cards/{card.id}/prediction")
+         patch.object(app_module, "_resolve_set_release_date", new=AsyncMock(return_value="2024-11-08")):
+        resp = client.get("/api/cards/1/prediction")
 
     assert resp.status_code == 200
     body = resp.json()
@@ -2307,22 +2321,18 @@ def test_prediction_endpoint_returns_fair_value_for_known_card():
     assert "confidence" in body["fair_value"]
 
 
-def test_prediction_endpoint_404s_for_unknown_card():
-    from app import app
-    client = TestClient(app)
+def test_prediction_endpoint_404s_for_unknown_card(monkeypatch):
+    client = TestClient(app_module.app)
+    monkeypatch.setattr(app_module.db, "get_card", lambda cid: None)
     resp = client.get("/api/cards/999999/prediction")
     assert resp.status_code == 404
 
 
-def test_prediction_endpoint_503s_when_no_model_run_exists_yet():
-    from app import app
-    client = TestClient(app)
-    user = db.list_users()[0]
-    card = db.create_card(db.Card(
-        id=None, user_id=user.id, name="Pikachu", set_name="Base Set",
-        card_number="58/102", language="english",
-    ))
-    resp = client.get(f"/api/cards/{card.id}/prediction")
+def test_prediction_endpoint_503s_when_no_model_run_exists_yet(monkeypatch):
+    client = TestClient(app_module.app)
+    card = _fake_card(2)
+    monkeypatch.setattr(app_module.db, "get_card", lambda cid: card if cid == 2 else None)
+    resp = client.get("/api/cards/2/prediction")
     assert resp.status_code == 503
 ```
 
@@ -2522,53 +2532,53 @@ git commit -m "feat: GET /api/cards/{card_id}/prediction endpoint"
 
 - [ ] **Step 1: Write the failing test**
 
+Uses the same `app_module.db` monkeypatching approach as Task 12 (see its
+test design note) rather than a real round trip through whichever backend
+`app.py` loaded.
+
 ```python
 # webapp/tests/test_pricing_rankings_api.py
 from __future__ import annotations
 
 import math
 import os
-import sys
-from unittest.mock import AsyncMock, patch
 
-os.environ["POKEMON_DB"] = "/tmp/test_rankings_api.sqlite"
 os.environ["PRICING_MODEL_DB"] = "/tmp/test_rankings_api_pm.sqlite"
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 from fastapi.testclient import TestClient
 
-import db
+import app as app_module
 import pricing_model.db as pmdb
 from pricing_model.features import CardFeatures
 
 
 @pytest.fixture(autouse=True)
-def fresh_dbs():
-    for path in (db.DB_PATH, pmdb.DB_PATH):
-        if path.exists():
-            path.unlink()
-    db.init_db()
+def fresh_pricing_db():
+    if pmdb.DB_PATH.exists():
+        pmdb.DB_PATH.unlink()
     pmdb.init_db()
     yield
 
 
-def test_rankings_sorts_by_undervalued_by_default():
-    from app import app
-    client = TestClient(app)
-    user = db.list_users()[0]
+def _fake_card(card_id: int, **overrides):
+    fields = dict(
+        id=card_id, user_id=1, name="Card", set_name="Set", card_number="1",
+        language="english", condition="NM", is_graded=False,
+        grade_company=None, grade=None, purchase_price=None, purchase_date=None,
+        current_market_price=None, last_priced_at=None, image_url=None,
+        photo_path=None, notes=None, created_at=None, product_type="card",
+    )
+    fields.update(overrides)
+    return app_module.db.Card(**fields)
 
-    cheap = db.create_card(db.Card(
-        id=None, user_id=user.id, name="Card Cheap", set_name="Set",
-        card_number="1", language="english",
-    ))
-    db.update_market_price(cheap.id, 5.0)   # market << fair value -> undervalued
-    pricey = db.create_card(db.Card(
-        id=None, user_id=user.id, name="Card Pricey", set_name="Set",
-        card_number="2", language="english",
-    ))
-    db.update_market_price(pricey.id, 500.0)  # market >> fair value -> overvalued
+
+def test_rankings_sorts_by_undervalued_by_default(monkeypatch):
+    client = TestClient(app_module.app)
+
+    cheap = _fake_card(1, name="Card Cheap", current_market_price=5.0)   # << fair value -> undervalued
+    pricey = _fake_card(2, name="Card Pricey", card_number="2", current_market_price=500.0)  # >> fair value -> overvalued
+    monkeypatch.setattr(app_module.db, "list_cards", lambda uid: [cheap, pricey])
 
     for c in (cheap, pricey):
         pmdb.upsert_card_features(c.id, CardFeatures(
@@ -2584,21 +2594,17 @@ def test_rankings_sorts_by_undervalued_by_default():
     )
     pmdb.save_model_run(run)
 
-    resp = client.get(f"/api/users/{user.id}/rankings?sort=undervalued")
+    resp = client.get("/api/users/1/rankings?sort=undervalued")
     assert resp.status_code == 200
     body = resp.json()
     ids_in_order = [row["card_id"] for row in body["rankings"]]
     assert ids_in_order[0] == cheap.id  # most undervalued first
 
 
-def test_rankings_skips_cards_without_features_silently():
-    from app import app
-    client = TestClient(app)
-    user = db.list_users()[0]
-    db.create_card(db.Card(
-        id=None, user_id=user.id, name="No Features Card", set_name="Set",
-        card_number="1", language="english",
-    ))
+def test_rankings_skips_cards_without_features_silently(monkeypatch):
+    client = TestClient(app_module.app)
+    no_features_card = _fake_card(1, name="No Features Card")
+    monkeypatch.setattr(app_module.db, "list_cards", lambda uid: [no_features_card])
 
     run = pmdb.ModelRun(
         id=None, fitted_at="", coefficients_raw={"intercept": 1.0}, coefficients_psa10={},
@@ -2608,7 +2614,7 @@ def test_rankings_skips_cards_without_features_silently():
     )
     pmdb.save_model_run(run)
 
-    resp = client.get(f"/api/users/{user.id}/rankings")
+    resp = client.get("/api/users/1/rankings")
     assert resp.status_code == 200
     assert resp.json()["rankings"] == []
 ```
