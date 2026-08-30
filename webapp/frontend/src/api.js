@@ -47,6 +47,7 @@ const P = {
   card:                (cid) => `/api/cards/${cid}`,
   cardPhoto:           (cid) => `/api/cards/${cid}/photo`,
   cardPriceHistory:    (cid) => `/api/cards/${cid}/price-history`,
+  cardPrediction:      (cid) => `/api/cards/${cid}/prediction`,
   identify:            () => `/api/identify`,
   refreshPrice:        () => `/api/refresh-price`,
   refreshAll:          () => `/api/refresh-prices/run-now`,
@@ -418,6 +419,20 @@ export const api = {
 
   async refreshAllPrices() { return request(P.refreshAll(), { method: 'POST' }) },
   async getHealth() { return request(P.health()) },
+
+  // Fair-value prediction for a card: { fair_value, psa10_fair_value,
+  // lifecycle, grade_worthiness, current_market_price, model_fitted_at }.
+  // Returns null on any failure (503 = model not fitted yet, 422 =
+  // unmapped rarity, 404 = card not found) so the UI can hide the panel
+  // instead of showing an error for what's an optional enrichment.
+  async getPrediction(cardId) {
+    if (!cardId) return null
+    try {
+      return await request(P.cardPrediction(cardId))
+    } catch (e) {
+      return null
+    }
+  },
 
   async getPriceHistory(cardId, opts = {}) {
     if (!cardId) return null
