@@ -153,7 +153,16 @@ def _lifecycle_curve(
     if not cells:
         return {}
 
-    residual = {k: dict(v) for k, v in cells.items()}
+    # A card whose window covers only one age bin (common for older cards --
+    # any card past ~36 months of age has its entire ~33-month window inside
+    # the "36+" bin) is exactly 0 after row-centering, injecting a hard 0
+    # into that bin's column median. On a production-shaped corpus this can
+    # be roughly half the cards and measurably pulls the affected bin's
+    # multiplier down (confirmed during review: ~9% low on "36+" vs its
+    # true value). Only rows spanning >=2 bins carry information about the
+    # bin-to-bin SHAPE, so single-bin rows are dropped before polishing --
+    # they contribute nothing but noise to column medians.
+    residual = {k: dict(v) for k, v in cells.items() if len(v) >= 2}
     col_effect: dict[str, float] = {}
     all_bins = {b for row in residual.values() for b in row}
     for b in all_bins:

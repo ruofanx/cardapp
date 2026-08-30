@@ -120,10 +120,21 @@ def test_fit_model_recovers_non_flat_lifecycle_shape_under_staggered_releases():
     # the SHAPE must survive: the hype peak (0-3, true 1.3) must read
     # meaningfully higher than the trough (9-12, true 0.85), not flat or
     # inverted -- this is exactly the failure mode a first-point-anchored
-    # estimator produces (it recovers ~1.0 for both).
-    assert "0-3" in curve and "9-12" in curve
-    assert curve["0-3"] > curve["9-12"] * 1.2
+    # estimator produces (it recovers ~1.0 for both, or worse).
+    #
+    # Threshold calibration matters here: an earlier draft of this test used
+    # a 1.2x margin, which the FIRST-POINT-ANCHORED (buggy) estimator also
+    # clears on ~70% of random seeds (its degenerate ~1.0-vs-~0.82 output is
+    # itself a ~1.2x ratio) -- confirmed during review by running this exact
+    # assertion against the pre-fix module across 30 seeds. 1.4x cleanly
+    # separates the two (0/30 pre-fix, 30/30 post-fix), and the monotone
+    # hype-to-trough chain below separates them even harder (2/30 vs 30/30)
+    # -- both are included so this test actually fails against a
+    # reintroduced first-point-anchoring bug, not just against a flat curve.
+    for b in ("0-3", "3-6", "6-9", "9-12", "36+"):
+        assert b in curve, f"bin {b} missing from recovered curve"
+    assert curve["0-3"] > curve["9-12"] * 1.4
+    assert curve["0-3"] > curve["3-6"] > curve["6-9"] > curve["9-12"]
     # The recovery bin (36+, true 1.1) must likewise read higher than the
     # trough, not collapse to the same level.
-    if "36+" in curve:
-        assert curve["36+"] > curve["9-12"] * 1.1
+    assert curve["36+"] > curve["9-12"] * 1.1
