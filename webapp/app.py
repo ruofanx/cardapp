@@ -819,6 +819,45 @@ async def card_prediction(card_id: int):
     }
 
 
+@app.get("/api/users/{user_id}/rankings")
+def user_rankings(user_id: int, sort: str = "undervalued"):
+    """Rank a user's collection by valuation gap, combined upside, or grade
+    EV. Cards with no stored features (never viewed via the prediction
+    endpoint yet) are silently skipped rather than erroring — this is a
+    best-effort view over whatever's already been computed."""
+    run = pricing_db.get_latest_model_run()
+    if run is None:
+        return {"rankings": []}
+
+    cards = db.list_cards(user_id)
+    rows = []
+    for card in cards:
+        features = pricing_db.get_card_features(card.id)
+        if features is None or card.current_market_price is None:
+            continue
+        raw_pred = predict_raw_price(features, run)
+        gap_pct = (card.current_market_price - raw_pred.point_estimate) / raw_pred.point_estimate * 100
+        ev = None if card.is_graded else grade_worthiness(features, run)
+        rows.append({
+            "card_id": card.id,
+            "name": card.name,
+            "current_market_price": card.current_market_price,
+            "fair_value": round(raw_pred.point_estimate, 2),
+            "valuation_gap_pct": round(gap_pct, 1),
+            "grade_ev": None if ev is None else round(ev.expected_value, 2),
+        })
+
+    if sort == "grade_ev":
+        rows = [r for r in rows if r["grade_ev"] is not None]
+        rows.sort(key=lambda r: r["grade_ev"], reverse=True)
+    elif sort == "upside":
+        rows.sort(key=lambda r: -r["valuation_gap_pct"])
+    else:  # "undervalued" (default) — most negative gap (cheapest vs. fair value) first
+        rows.sort(key=lambda r: r["valuation_gap_pct"])
+
+    return {"rankings": rows}
+
+
 def _sync_card_tags(card: "db.Card", desired_names: list[str]):
     """Reconcile the card's tag set against the desired name list.
 
