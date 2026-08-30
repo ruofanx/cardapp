@@ -78,6 +78,49 @@ def test_rankings_sorts_by_undervalued_by_default(monkeypatch):
     assert ids_in_order[0] == cheap.id  # most undervalued first
 
 
+def test_rankings_recomputes_stale_months_since_release(monkeypatch):
+    """Regression for the final-review finding that shipped only half-fixed:
+    /prediction recomputes months_since_release from release_date on every
+    call (app.py's card_prediction, via dataclasses.replace), but /rankings
+    was still trusting whatever was cached whenever the card's features were
+    first built. A card whose features were cached long ago carries a stale
+    months_since_release that no longer matches its (bin-dependent) lifecycle
+    stage, so its fair_value silently drifts from what /prediction reports
+    for the very same cached row."""
+    client = TestClient(app_module.app)
+
+    card = _fake_card(1, name="Old Cache", current_market_price=50.0)
+    monkeypatch.setattr(app_module.db, "list_cards", lambda uid: [card])
+
+    # release_date is old enough to always land in the open-ended "36+" bin
+    # (matches the existing convention in test_pricing_model.py:164, so this
+    # never expires the way a bounded-bin date literal would as real time
+    # advances). months_since_release cached at 1.0 -> stale bin is "0-3".
+    # The two bins carry very different lifecycle multipliers below, so
+    # trusting the stale value produces a visibly different fair_value.
+    release_date = "2015-01-01"  # old enough to always land in the "36+" bin
+    pmdb.upsert_card_features(1, CardFeatures(
+        canonical_rarity="rare_holo", pull_scarcity=1.0, gem_rate=0.5,
+        character_tier="C", is_trainer_art=False, language="english",
+        era="sv", release_date=release_date, months_since_release=1.0,
+    ))
+    run = pmdb.ModelRun(
+        id=None, fitted_at="", coefficients_raw={"intercept": math.log(50.0)},
+        coefficients_psa10={}, lifecycle_curve={"0-3": 2.0, "36+": 0.5},
+        market_index={}, psa9_fraction=0.4, residual_std_raw=0.2,
+        residual_std_psa10=0.0, r_squared_raw=0.7, r_squared_psa10=0.0, n_cards=500,
+    )
+    pmdb.save_model_run(run)
+
+    resp = client.get("/api/users/1/rankings")
+    assert resp.status_code == 200
+    fair_value = resp.json()["rankings"][0]["fair_value"]
+
+    # Expected: fair_value computed from the *current* age-derived bin
+    # ("36+" -> 0.5x), not the stale cached bin ("0-3" -> 2.0x).
+    assert fair_value == pytest.approx(25.0, abs=0.5)
+
+
 def test_rankings_skips_cards_without_features_silently(monkeypatch):
     client = TestClient(app_module.app)
     no_features_card = _fake_card(1, name="No Features Card")

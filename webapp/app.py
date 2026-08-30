@@ -862,6 +862,10 @@ def user_rankings(user_id: int, sort: str = "undervalued",
         features = pricing_db.get_card_features(card.id)
         if features is None or card.current_market_price is None:
             continue
+        # See the matching comment in card_prediction() above: a cached
+        # features row can be arbitrarily old, so months_since_release must
+        # be recomputed from release_date on every call, not trusted as-is.
+        features = dataclasses.replace(features, months_since_release=months_since_release(features.release_date))
         raw_pred = predict_raw_price(features, run)
         gap_pct = (card.current_market_price - raw_pred.point_estimate) / raw_pred.point_estimate * 100
         ev = None if card.is_graded else grade_worthiness(features, run)

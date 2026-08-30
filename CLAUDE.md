@@ -158,6 +158,15 @@ this follows the same one-file-per-subsystem precedent as
 `pricecharting_cache.sqlite`). `pricing_model.db.init_db()` runs at app
 startup and is idempotent — safe to call repeatedly.
 
+**Production deploy requirement:** unlike the 24h-TTL caches it's modeled
+after, this file holds the fitted model + harvested training corpus, which
+are expensive to rebuild. On Railway (no committed volume config —
+`DB_PATH` just resolves to a path under the app directory by default),
+mount a persistent volume and set `PRICING_MODEL_DB=<mount-path>/pricing_model.sqlite`
+so it survives redeploys instead of resetting every time (which would
+otherwise 503 `/api/cards/{id}/prediction` and `/api/users/{id}/rankings`
+until `backfill_pricing_corpus.py` is rerun and the monthly refit fires).
+
 Training corpus: one-time backfill via `backfill_pricing_corpus.py` (harvests
 Pokemon TCG API + PriceCharting into `corpus_cards`/`corpus_history`), then a
 monthly scheduled refit (`refresh_job.py` → `pricing_model.jobs.monthly_refit`,
