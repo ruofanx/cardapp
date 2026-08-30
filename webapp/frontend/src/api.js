@@ -57,6 +57,17 @@ const P = {
   tradePropose:        () => `/api/trade/propose`,
 }
 
+// Direct-to-third-party calls (pokemontcg.io, api.tcgdex.net, pokeapi.co) have
+// no server-side timeout backing them up — if one of those hosts is down or
+// silently drops the connection, a bare fetch() can hang far longer than a
+// user will wait, stalling the whole Scan widening fan-out (which awaits
+// Promise.allSettled on every task) indefinitely with no error shown.
+function fetchWithTimeout(url, opts = {}, ms = 8000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(timer))
+}
+
 async function request(path, opts = {}) {
   const url = `${state.base}${path}`
   const init = {
@@ -515,7 +526,7 @@ export const api = {
       const url = `https://api.pokemontcg.io/v2/cards?${params}`
       let hits = []
       try {
-        const res = await fetch(url, { headers: { Accept: 'application/json' } })
+        const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } })
         if (!res.ok) continue
         hits = (await res.json())?.data || []
       } catch (_) { continue }
@@ -560,7 +571,7 @@ export const api = {
     const cache = (state._nameCache = state._nameCache || {})
     if (cache[base]) return cache[base]
     try {
-      const res = await fetch(`https://pokeapi.co/api/v2/pokemon-species/${base}`, { headers: { Accept: 'application/json' } })
+      const res = await fetchWithTimeout(`https://pokeapi.co/api/v2/pokemon-species/${base}`, { headers: { Accept: 'application/json' } })
       if (!res.ok) { cache[base] = null; return null }
       const data = await res.json()
       const pick = (codes) => { for (const code of codes) { const hit = (data.names || []).find(n => n.language?.name === code); if (hit?.name) return hit.name } return null }
@@ -582,7 +593,7 @@ export const api = {
     let list = []
     for (const t of tries) {
       try {
-        const res = await fetch(`${base}?name=${encodeURIComponent(t)}`, { headers: { Accept: 'application/json' } })
+        const res = await fetchWithTimeout(`${base}?name=${encodeURIComponent(t)}`, { headers: { Accept: 'application/json' } })
         if (!res.ok) continue
         const data = await res.json()
         if (Array.isArray(data) && data.length > 0) { list = data; break }
@@ -591,7 +602,7 @@ export const api = {
     if (list.length === 0) return []
     const detailed = await Promise.all(list.slice(0, pageSize).map(async (thin) => {
       try {
-        const res = await fetch(`${base}/${thin.id}`, { headers: { Accept: 'application/json' } })
+        const res = await fetchWithTimeout(`${base}/${thin.id}`, { headers: { Accept: 'application/json' } })
         return res.ok ? await res.json() : null
       } catch (_) { return null }
     }))
@@ -672,7 +683,7 @@ export const api = {
     for (const q of queries) {
       const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(q)}&pageSize=5`
       try {
-        const res = await fetch(url, { headers: { Accept: 'application/json' } })
+        const res = await fetchWithTimeout(url, { headers: { Accept: 'application/json' } })
         if (!res.ok) continue
         const candidates = (await res.json())?.data || []
         if (candidates.length === 0) continue

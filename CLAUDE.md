@@ -29,8 +29,16 @@ FastAPI backend + React/Vite PWA frontend, served together on port 8000.
 │   ├── pricecharting_cache.sqlite  # 24h PC cache (gitignored)
 │   ├── pricing_model.sqlite        # Pricing model corpus + fitted runs (gitignored)
 │   ├── uploads/             # User card photos (gitignored)
-│   ├── frontend/src/        # REAL frontend — Vite + React app (see Frontend architecture)
-│   └── static/              # Build output (dist/) + legacy dead code (see Frontend architecture)
+│   ├── frontend/            # REAL frontend source — Vite + React, builds to static/dist/
+│   │   ├── src/
+│   │   │   ├── api.js, app.jsx, components.jsx, data.js, Login.jsx
+│   │   │   └── screens/     # Detail.jsx, Browse.jsx, Home.jsx, Scan.jsx, Rankings.jsx, ...
+│   │   ├── vite.config.js   # outDir: ../static/dist (see Frontend architecture)
+│   │   └── node_modules/    # gitignored — `npm install` here before `npm run build`
+│   └── static/
+│       ├── dist/            # BUILT output FastAPI actually serves — commit after `npm run build`
+│       └── screens/*.jsx, app.jsx, api.jsx, ...  # LEGACY Babel-standalone frontend, unused
+│                                                  # by the running server since the Vite migration
 ```
 
 ## Running the app
@@ -175,24 +183,36 @@ model run active if the new fit's R² regresses.
 
 ## Frontend architecture
 
-**`webapp/frontend/src/` is the real, live frontend** — a Vite + React app.
-Build it with `npm run build` from that directory; the build output goes to
-`webapp/static/dist/`, which `app.py`'s catch-all static mount (`STATIC_DIR`
-resolution near the bottom of `app.py`) serves whenever `dist/index.html`
-exists, falling back to plain `webapp/static/` only if it doesn't. For local
-dev, run `npm run dev` in `frontend/` (Vite dev server) or just build once and
-let `:8000` serve the `dist/` output — either way, `:8000` remains the only
-backend to run.
+**The live app is a Vite build, not Babel-standalone.** Real source is
+`webapp/frontend/src/` (React 18, custom navigation stack in `app.jsx`, no
+React Router). `webapp/frontend/vite.config.js` builds it to
+`webapp/static/dist/`, which is what FastAPI's catch-all `StaticFiles`
+mount (the `STATIC_DIR` resolution near the bottom of `app.py`) actually
+serves at `/` whenever `dist/index.html` exists, falling back to plain
+`webapp/static/` only if it doesn't — `index.html` there references
+hashed `/assets/index-*.js` bundles, regenerated (new hashes) on every
+build. For local dev, run `npm run dev` in `frontend/` (Vite dev server)
+or just build once and let `:8000` serve the `dist/` output — either way,
+`:8000` remains the only backend to run.
 
-`webapp/static/*.jsx` (the old React+Babel-standalone, no-build-step frontend
-described in earlier revisions of this doc) is **legacy, dead code** — it is
-shadowed at runtime by `static/dist/` and is kept only for historical
-reference. Do not implement new frontend work against it: this exact mistake
-already happened twice on the pricing-prediction-model plan (the Fair Value
-panel and the Rankings screen were both first built against `static/*.jsx`
-before being redone against `frontend/src/`).
+`webapp/static/screens/*.jsx` + top-level `.jsx` files (the old
+Babel-standalone, no-build-step frontend, transpiled in-browser via
+`<script type=text/babel>`) are **legacy and no longer served** —
+confirmed 2026-08-29 when a fix applied only there had no effect live.
+Don't edit them expecting changes to appear; edit `webapp/frontend/src/`
+instead. This exact mistake already happened twice on the
+pricing-prediction-model plan (the Fair Value panel and the Rankings
+screen were both first built against `static/*.jsx` before being redone
+against `frontend/src/`).
 
-Custom navigation stack in `frontend/src/app.jsx` — no React Router.
+After editing anything under `webapp/frontend/src/`, you MUST rebuild and
+commit the output (`webapp/static/dist/` is checked into git, not
+regenerated at deploy time):
+```bash
+cd webapp/frontend && npm install   # first time only
+npm run build                        # regenerates webapp/static/dist/
+```
+Backend `.py` changes hot-reload via `uvicorn --reload` with no rebuild step.
 
 ### Card data shape (frontend)
 `api.normalizeCard` maps the backend row to:
@@ -200,7 +220,7 @@ Custom navigation stack in `frontend/src/app.jsx` — no React Router.
 { id, name, set, code, lang, usd, change, image_url, condition,
   is_graded, grader, grade, purchase_price, tags[], ... }
 ```
-- `lang`: `"EN"` / `"JP"` (frontend) ↔ `"english"` / `"japanese"` (backend)
+- `lang`: `"EN"` / `"JP"` / `"CH"` (frontend) ↔ `"english"` / `"japanese"` / `"chinese"` (backend)
 - `grader`: maps from `grade_company`
 - `usd`: maps from `current_market_price`
 - `change`: maps from `gain_loss_pct`

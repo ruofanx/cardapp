@@ -56,7 +56,8 @@ function buildSourceLinks({ card, lang, grading, grader, grade }) {
       : null;
   } catch (_) { ebayUrl = null; }
   if (!ebayUrl) {
-    const ebayQ = `${base}${lang === 'JP' ? ' Japanese' : ''}${isGraded ? ` ${grader} ${grade}` : ''}`;
+    const langQualifier = lang === 'JP' ? ' Japanese' : lang === 'CH' ? ' Chinese' : '';
+    const ebayQ = `${base}${langQualifier}${isGraded ? ` ${grader} ${grade}` : ''}`;
     ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${enc(ebayQ)}&LH_Sold=1&LH_Complete=1&_sop=13`;
   }
 
@@ -107,6 +108,17 @@ function buildSourceLinks({ card, lang, grading, grader, grade }) {
       sub:   'Japanese listings (EUR)',
       lang: 'JP',
       url: `https://www.cardmarket.com/en/Pokemon/Cards?searchString=${enc(name + ' japanese')}`,
+    });
+  } else if (lang === 'CH') {
+    // No TCGplayer/Cardmarket catalogue coverage for Chinese-exclusive
+    // prints — PriceCharting's sold-comp aggregate is the most reliable
+    // source (same one raw_price_resolver's sold anchor uses).
+    links.push({
+      key: 'pricecharting',
+      label: 'PriceCharting',
+      sub:   'Chinese-exclusive sold-comp aggregate',
+      lang: 'CH',
+      url: `https://www.pricecharting.com/search-products?q=${enc(base)}&type=prices`,
     });
   }
   return links;
@@ -520,7 +532,10 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   //     number changes immediately on click (not after the 350ms debounce)
   //   - Clean → persisted c.usd
   const condMult = { NM: 1, LP: 0.78, MP: 0.55, HP: 0.34, DMG: 0.20 };
-  const langMult = { EN: 1, JP: 0.86 };
+  // No comp-backed multiplier for CH yet (exclusives often carry a premium,
+  // not a discount, unlike JP reprints) — leave unadjusted until the real
+  // quote lands rather than guess a direction.
+  const langMult = { EN: 1, JP: 0.86, CH: 1 };
   const localEstimate = (c.usd != null && grading === 'raw')
     ? c.usd * (condMult[condition] || 1) * (langMult[lang] || 1)
     : null;
@@ -1010,7 +1025,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
             <>
               <div className="row gap-2" style={{ marginBottom: 8 }}>
                 <div className="row" style={{ flex: 1, background: 'var(--bg-2)', borderRadius: 10, padding: 3 }}>
-                  {['EN', 'JP'].map(L => (
+                  {['EN', 'JP', 'CH'].map(L => (
                     <button key={L} className="tap" onClick={() => setLang(L)} style={{
                       flex: 1, padding: '7px 0', borderRadius: 8,
                       background: lang === L ? 'var(--bg-3)' : 'transparent',
