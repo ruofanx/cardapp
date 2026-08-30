@@ -22,7 +22,7 @@ export default function RankingsScreen({ navigate, currentUser, collection }) {
   // params.card, not params.id.
   const openCard = (r) => {
     const card = (collection || []).find(c => String(c.id) === String(r.card_id))
-    navigate('detail', { card: card || { id: String(r.card_id), name: r.name, current_market_price: r.current_market_price } })
+    navigate('detail', { card: card || { id: String(r.card_id), name: r.name, current_market_price: r.current_market_price, usd: r.current_market_price } })
   }
 
   return (
