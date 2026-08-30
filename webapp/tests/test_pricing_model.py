@@ -59,3 +59,71 @@ def test_lifecycle_multiplier_falls_back_to_median_when_bin_missing():
 
 def test_lifecycle_multiplier_empty_curve_returns_one():
     assert pm.lifecycle_multiplier({}, 5.0) == 1.0
+
+
+def _shift_month(year: int, month: int, delta_months: int) -> tuple[int, int]:
+    total = (year * 12 + (month - 1)) - delta_months
+    return total // 12, total % 12 + 1
+
+
+def _synthetic_corpus_with_lifecycle(n_cards: int = 200, seed: int = 11):
+    """Cards with a KNOWN non-flat lifecycle curve and a KNOWN +1%/month
+    market trend, with STAGGERED release ages so different cards cover
+    different age ranges within the same 12 calendar months -- this mirrors
+    PriceCharting's calendar-anchored (not release-anchored) chart history
+    and is exactly the shape that breaks a naive per-card-first-point
+    anchor. A correct estimator must recover the true curve's shape even
+    though no single card's own series spans more than 12 months of age."""
+    import random
+    random.seed(seed)
+
+    true_curve = {
+        "0-3": 1.3, "3-6": 1.05, "6-9": 0.9, "9-12": 0.85,
+        "12-18": 0.82, "18-24": 0.85, "24-36": 0.95, "36+": 1.1,
+    }
+
+    def true_multiplier(months: float) -> float:
+        for lo, hi in [(0, 3), (3, 6), (6, 9), (9, 12), (12, 18), (18, 24), (24, 36), (36, 9999)]:
+            if lo <= months < hi:
+                label = f"{lo:g}-{hi:g}" if hi < 9999 else f"{lo:g}+"
+                return true_curve[label]
+        return 1.0
+
+    calendar_months = [f"2024-{m:02d}" for m in range(1, 13)]
+    cards = []
+    history = {}
+    for i in range(n_cards):
+        card_key = f"lc-{i}"
+        age_at_window_start = random.randint(0, 40)
+        ry, rm = _shift_month(2024, 1, age_at_window_start)
+        cards.append(CorpusCardRow(
+            card_key=card_key, name=f"Card {i}", set_name="Lifecycle Set",
+            card_number=str(i), rarity_raw="Rare Holo", era="sv", language="english",
+            release_date=f"{ry:04d}-{rm:02d}-01", psa10_price_usd=None, grade9_price_usd=None,
+        ))
+        points = []
+        for month_idx, month in enumerate(calendar_months):
+            months_since = age_at_window_start + month_idx
+            true_price = 10.0 * (1.01 ** month_idx) * true_multiplier(months_since)
+            noise = random.uniform(0.97, 1.03)
+            points.append((month, true_price * noise))
+        history[card_key] = points
+    return cards, history, true_curve
+
+
+def test_fit_model_recovers_non_flat_lifecycle_shape_under_staggered_releases():
+    cards, history, true_curve = _synthetic_corpus_with_lifecycle()
+    run = pm.fit_model(cards, history)
+
+    curve = run.lifecycle_curve
+    # Exact-value recovery isn't robust to noise/bin-coverage variance, but
+    # the SHAPE must survive: the hype peak (0-3, true 1.3) must read
+    # meaningfully higher than the trough (9-12, true 0.85), not flat or
+    # inverted -- this is exactly the failure mode a first-point-anchored
+    # estimator produces (it recovers ~1.0 for both).
+    assert "0-3" in curve and "9-12" in curve
+    assert curve["0-3"] > curve["9-12"] * 1.2
+    # The recovery bin (36+, true 1.1) must likewise read higher than the
+    # trough, not collapse to the same level.
+    if "36+" in curve:
+        assert curve["36+"] > curve["9-12"] * 1.1

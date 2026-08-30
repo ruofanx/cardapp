@@ -27,6 +27,16 @@ from pricing_model import character_tiers, gem_rate, pull_rates, rarity_map
 from pricing_model.db import CorpusCardRow, ModelRun
 
 RIDGE_ALPHA = 1.0
+MEDIAN_POLISH_ITERATIONS = 20
+
+# cards_in_tier is fixed at 1 everywhere in this model -- both here
+# (training) and wherever CardFeatures is built for prediction (see Task
+# 12's build_card_features call, which must also pass 1). Per-set
+# slot-competition effects are folded into pull_rates.py's per-tier config
+# instead (via SET_OVERRIDES) rather than computed dynamically at both
+# training and serving time, so the two can never drift apart on this
+# parameter. Do not change one side without the other.
+FIXED_CARDS_IN_TIER = 1
 
 LIFECYCLE_BINS: list[tuple[float, float]] = [
     (0, 3), (3, 6), (6, 9), (9, 12), (12, 18), (18, 24), (24, 36), (36, 10_000),
@@ -43,10 +53,12 @@ FEATURE_ORDER_PSA10: list[str] = FEATURE_ORDER_RAW + ["log_inv_gem_rate"]
 
 
 def _bin_label(months: float) -> str:
+    if months < 0:
+        months = 0.0  # future/clock-skew release date: treat as newly released
     for lo, hi in LIFECYCLE_BINS:
         if lo <= months < hi:
-            return f"{lo:g}-{hi if hi < 10_000 else '36+'}"
-    return "36+"
+            return f"{lo:g}-{hi:g}" if hi < 10_000 else f"{lo:g}+"
+    return f"{LIFECYCLE_BINS[-1][0]:g}+"
 
 
 def _month_to_date(month_str: str) -> date:
@@ -59,42 +71,113 @@ def _months_between(a: date, b: date) -> float:
 
 
 def _market_index(history: dict[str, list[tuple[str, float]]]) -> dict[str, float]:
-    ratios_by_month: dict[str, list[float]] = defaultdict(list)
-    for points in history.values():
-        if len(points) < 2:
-            continue
-        base_price = points[0][1]
-        if base_price <= 0:
-            continue
+    """Chain-linked index: for each pair of adjacent months present in the
+    corpus, the link ratio is the median (this-month price / prior-month
+    price) across cards observed in BOTH months, and the index cumulates
+    these links from 1.0 at the earliest month.
+
+    NOT a per-card ratio against each card's own first observation: cards
+    enter this corpus at different ages within the same calendar window
+    (PriceCharting's ~33-month chart_data is calendar-anchored, ending
+    "now", not anchored to each card's release date), so anchoring each
+    card's ratio at its own first point would conflate "when a card
+    happened to join the panel" with "the market moving" -- verified during
+    review to bias the index by double-digit percentages under realistic
+    staggered-entry corpora.
+    """
+    by_month: dict[str, dict[str, float]] = defaultdict(dict)
+    for card_key, points in history.items():
         for month, price in points:
-            ratios_by_month[month].append(price / base_price)
-    return {month: statistics.median(ratios) for month, ratios in ratios_by_month.items()}
+            if price > 0:
+                by_month[month][card_key] = price
+
+    months = sorted(by_month.keys())
+    index: dict[str, float] = {}
+    if not months:
+        return index
+    index[months[0]] = 1.0
+    for prev_month, month in zip(months, months[1:]):
+        prev_prices = by_month[prev_month]
+        curr_prices = by_month[month]
+        common_keys = set(prev_prices) & set(curr_prices)
+        ratios = [curr_prices[k] / prev_prices[k] for k in common_keys if prev_prices[k] > 0]
+        link = statistics.median(ratios) if ratios else 1.0
+        index[month] = index[prev_month] * link
+    return index
 
 
 def _lifecycle_curve(
     cards_by_key: dict[str, CorpusCardRow],
     history: dict[str, list[tuple[str, float]]],
     market_index: dict[str, float],
+    iterations: int = MEDIAN_POLISH_ITERATIONS,
 ) -> dict[str, float]:
-    by_bin: dict[str, list[float]] = defaultdict(list)
+    """Median-polish estimate of the age-dependent lifecycle multiplier from
+    the market-detrended (card x age-bin) table.
+
+    Anchoring each card's detrended series at its own first observation (an
+    earlier draft's approach) has the same staggered-entry problem as a
+    naive market index (see `_market_index`): the anchor point's age differs
+    per card, so each card gets normalized to 1.0 at a DIFFERENT point on
+    the true curve, and averaging those per-bin flattens or inverts the
+    recovered shape -- confirmed during review with a constructed
+    counter-example (known hype->trough->recovery truth recovered as a
+    flat, partly-inverted curve under first-point anchoring).
+
+    Median polish instead treats this as a two-way table (card x age bin)
+    and iteratively removes row (card) and column (bin) medians in log
+    space. This correctly separates each card's own price level from the
+    age-dependent shape even though the table is unbalanced (different
+    cards cover different bin ranges within their own ~33-month window) --
+    confirmed during review to recover a known non-flat truth almost
+    exactly on a corpus with staggered release ages.
+    """
+    cells: dict[str, dict[str, float]] = defaultdict(dict)
     for card_key, points in history.items():
         card = cards_by_key.get(card_key)
-        if not card or len(points) < 2:
-            continue
-        base_price = points[0][1]
-        if base_price <= 0:
+        if not card:
             continue
         release = _month_to_date(card.release_date[:7])
         for month, price in points:
             idx = market_index.get(month)
-            if not idx or idx <= 0:
+            if not idx or idx <= 0 or price <= 0:
                 continue
-            detrended = (price / idx) / base_price
             months_since = _months_between(release, _month_to_date(month))
             if months_since < 0:
                 continue
-            by_bin[_bin_label(months_since)].append(detrended)
-    return {b: statistics.median(v) for b, v in by_bin.items() if v}
+            label = _bin_label(months_since)
+            log_val = math.log(price / idx)
+            prev = cells[card_key].get(label)
+            cells[card_key][label] = log_val if prev is None else (prev + log_val) / 2
+
+    if not cells:
+        return {}
+
+    residual = {k: dict(v) for k, v in cells.items()}
+    col_effect: dict[str, float] = {}
+    all_bins = {b for row in residual.values() for b in row}
+    for b in all_bins:
+        col_effect[b] = 0.0
+
+    for _ in range(iterations):
+        for row in residual.values():
+            vals = list(row.values())
+            if not vals:
+                continue
+            m = statistics.median(vals)
+            for b in row:
+                row[b] -= m
+        for b in all_bins:
+            vals = [row[b] for row in residual.values() if b in row]
+            if not vals:
+                continue
+            m = statistics.median(vals)
+            col_effect[b] += m
+            for row in residual.values():
+                if b in row:
+                    row[b] -= m
+
+    return {b: math.exp(v) for b, v in col_effect.items()}
 
 
 def lifecycle_multiplier(curve: dict[str, float], months_since_release: float) -> float:
@@ -127,7 +210,9 @@ def _feature_row(order: list[str], card: CorpusCardRow, pull_scarcity: float,
 
 def _ridge_fit(X: list[list[float]], y: list[float]) -> tuple[np.ndarray, float, float]:
     """Closed-form ridge regression: beta = (X^T X + alpha*I)^-1 X^T y,
-    intercept left unregularized. Returns (beta, residual_std, r_squared)."""
+    intercept left unregularized. Returns (beta, residual_std, r_squared).
+    Assumes column 0 of X is the intercept -- true for both
+    FEATURE_ORDER_RAW and FEATURE_ORDER_PSA10 (asserted in fit_model)."""
     Xm = np.array(X)
     ym = np.array(y)
     n, k = Xm.shape
@@ -144,6 +229,8 @@ def _ridge_fit(X: list[list[float]], y: list[float]) -> tuple[np.ndarray, float,
 
 
 def fit_model(cards: list[CorpusCardRow], history: dict[str, list[tuple[str, float]]]) -> ModelRun:
+    assert FEATURE_ORDER_RAW[0] == "intercept" and FEATURE_ORDER_PSA10[0] == "intercept"
+
     cards_by_key = {c.card_key: c for c in cards}
     market_index = _market_index(history)
     curve = _lifecycle_curve(cards_by_key, history, market_index)
@@ -162,12 +249,12 @@ def fit_model(cards: list[CorpusCardRow], history: dict[str, list[tuple[str, flo
         latest_month, latest_price = points[-1]
         if latest_price <= 0:
             continue
-        idx = market_index.get(latest_month, 1.0)
+        idx = market_index.get(latest_month) or 1.0
         release = _month_to_date(card.release_date[:7])
         months_since = _months_between(release, _month_to_date(latest_month))
         mult = lifecycle_multiplier(curve, months_since) or 1.0
         char_tier = character_tiers.get_character_tier(card.name)
-        scarcity = pull_rates.pull_rate_scarcity(card.era, tier, card.set_name, cards_in_tier=1)
+        scarcity = pull_rates.pull_rate_scarcity(card.era, tier, card.set_name, cards_in_tier=FIXED_CARDS_IN_TIER)
 
         target = math.log(latest_price / (idx * mult))
         X_raw.append(_feature_row(FEATURE_ORDER_RAW, card, scarcity, char_tier))
@@ -182,6 +269,9 @@ def fit_model(cards: list[CorpusCardRow], history: dict[str, list[tuple[str, flo
             y_psa.append(math.log(card.psa10_price_usd / (idx * mult)))
             if card.grade9_price_usd and card.grade9_price_usd > 0:
                 g9_ratios.append(card.grade9_price_usd / card.psa10_price_usd)
+
+    if not X_raw:
+        raise ValueError("fit_model: no valid training rows in corpus (check rarity mapping / history length)")
 
     beta_raw, residual_std_raw, r_squared_raw = _ridge_fit(X_raw, y_raw)
     coefficients_raw = {name: float(b) for name, b in zip(FEATURE_ORDER_RAW, beta_raw)}
