@@ -15,7 +15,7 @@
 - Data policy: free/derivable inputs only. PSA and GemRate population scraping were evaluated during planning and are both Cloudflare-blocked (403/managed-challenge) — confirmed empirically, not assumed. `gem_rate` is therefore a config-table heuristic estimate, never live-scraped, mirroring pull-rate.
 - Language scope: EN, JP, and Chinese-exclusive cards all get predictions. The training corpus itself is EN-only in this plan (Pokemon TCG API set-card lists are reliable and verified reachable; TCGdex connectivity could not be verified from the planning environment) — JP/CN cards are predicted using the fitted language-factor coefficient and always carry the widest confidence band. This matches the spec's explicit risk note on thin CN/JP training data.
 - New tables live in a dedicated `webapp/pricing_model.sqlite` file (own connection, own schema), **not** in `db.py`/`db_postgres.py`/`schema.sql`. Reason: `app.py` reads/writes cards via `db_postgres` (Postgres) in production but falls back to `db` (SQLite) locally, while the existing background-job modules (`refresh_job.py`, `price_history_refresh.py`) both do a plain `import db` (SQLite) regardless of which backend `app.py` is using — a pre-existing split in this codebase. Following the `pricecharting_cache.sqlite` / `ebay_cache.sqlite` precedent (each subsystem owns its own cache/data file) sidesteps that inconsistency entirely instead of compounding it.
-- No new frontend build tooling. `static/*.jsx` files are transpiled in-browser by Babel-standalone — follow that pattern exactly, no imports/exports beyond what `index.html`'s script tags already wire up.
+- **Frontend architecture correction (discovered mid-implementation, see Task 14):** the app has TWO frontend trees. `webapp/static/*.jsx` is a legacy Babel-standalone build (no imports/exports, `window.api` global) — but it is dead code in practice: `app.py`'s `FRONTEND_DIR` prefers `webapp/static/dist/` (a committed Vite build output) whenever `dist/index.html` exists, which it currently does. The REAL, live frontend is the ES-module Vite app at `webapp/frontend/src/` (`api.js`, `screens/*.jsx`, `app.jsx` router), built via `npm run build` (= `vite build`) from `webapp/frontend/`, output to `webapp/static/dist/`. Frontend tasks (14, 15) target `webapp/frontend/src/` — real imports/exports, `import api from '../api.js'` (not `window.api`) — and must end with an `npm run build` step so the change actually reaches `static/dist/` and is visible when the app is loaded normally. (A `webapp/static/*.jsx` edit from before this correction was discovered is harmless dead code, left in place for legacy-path parity, but is not load-bearing for the live app.)
 - Every task ends with a runnable verification (`pytest` for backend, manual browser check for frontend) before its commit.
 
 ---
@@ -2870,53 +2870,58 @@ git commit -m "feat: GET /api/users/{user_id}/rankings endpoint"
 
 ## Task 14: Frontend — Fair Value panel on Detail screen
 
+**IMPORTANT — read the Global Constraints frontend-architecture note above
+first.** The live frontend is the Vite app at `webapp/frontend/src/`, not
+`webapp/static/*.jsx` (dead code shadowed by the committed `static/dist/`
+build). This task's files, imports, and build step all reflect that.
+
 **Files:**
-- Modify: `webapp/static/api.jsx`
-- Modify: `webapp/static/screens/Detail.jsx`
+- Modify: `webapp/frontend/src/api.js`
+- Modify: `webapp/frontend/src/screens/Detail.jsx`
 
 **Interfaces:**
 - Consumes: `GET /api/cards/{card_id}/prediction` (Task 12)
-- Produces: `window.api.getPrediction(cardId)`, a `FairValuePanel` component rendered inside `OverviewTab`
+- Produces: `api.getPrediction(cardId)` (named export `api`'s method, from `webapp/frontend/src/api.js`), a `FairValuePanel` component rendered inside `OverviewTab`
 
 - [ ] **Step 1: Add the API client method**
 
-In `webapp/static/api.jsx`, add to the `P` routes object (near `cardPriceHistory`):
+In `webapp/frontend/src/api.js`, add to the `P` routes object (near `cardPriceHistory`, around line 49):
 
 ```js
-    cardPrediction:  (cid) => `/api/cards/${cid}/prediction`,
+  cardPrediction:      (cid) => `/api/cards/${cid}/prediction`,
 ```
 
-Add a new method alongside `getPriceHistory` (same object literal):
+Add a new method to the `export const api = { ... }` object, alongside `getPriceHistory` (around line 422) — this file's existing style has no trailing semicolons, match it:
 
 ```js
-    // Fair-value prediction for a card: { fair_value, psa10_fair_value,
-    // lifecycle, grade_worthiness, current_market_price, model_fitted_at }.
-    // Returns null on any failure (503 = model not fitted yet, 422 =
-    // unmapped rarity, 404 = card not found) so the UI can hide the panel
-    // instead of showing an error for what's an optional enrichment.
-    async getPrediction(cardId) {
-      if (!cardId) return null;
-      try {
-        return await request(P.cardPrediction(cardId));
-      } catch (e) {
-        return null;
-      }
-    },
+  // Fair-value prediction for a card: { fair_value, psa10_fair_value,
+  // lifecycle, grade_worthiness, current_market_price, model_fitted_at }.
+  // Returns null on any failure (503 = model not fitted yet, 422 =
+  // unmapped rarity, 404 = card not found) so the UI can hide the panel
+  // instead of showing an error for what's an optional enrichment.
+  async getPrediction(cardId) {
+    if (!cardId) return null
+    try {
+      return await request(P.cardPrediction(cardId))
+    } catch (e) {
+      return null
+    }
+  },
 ```
 
 - [ ] **Step 2: Add the FairValuePanel component and wire it into OverviewTab**
 
-In `webapp/static/screens/Detail.jsx`, add a new component near `PricePointChart` (both are Overview-tab-only pieces):
+In `webapp/frontend/src/screens/Detail.jsx`, add a new component near `PricePointChart` (both are Overview-tab-only pieces). This file already imports `React, { useState, useRef }` and `api` (default export) and `Price` (from `../components.jsx`) at the top — use those, not globals:
 
 ```jsx
 function FairValuePanel({ card }) {
-  const [pred, setPred] = useStateDetail(null);
+  const [pred, setPred] = useState(null);
 
   React.useEffect(() => {
-    if (!card?.id || !window.api?.getPrediction) { setPred(null); return; }
+    if (!card?.id) { setPred(null); return; }
     let cancelled = false;
     (async () => {
-      const res = await window.api.getPrediction(card.id);
+      const res = await api.getPrediction(card.id);
       if (!cancelled) setPred(res);
     })();
     return () => { cancelled = true; };
@@ -2928,53 +2933,77 @@ function FairValuePanel({ card }) {
   const market = pred.current_market_price;
   const gapPct = market != null ? ((market - fv.point_estimate) / fv.point_estimate) * 100 : null;
   const badge = gapPct == null ? null : (gapPct > 10 ? 'Overvalued' : gapPct < -10 ? 'Undervalued' : 'Fair');
+  const badgeColor = badge === 'Undervalued' ? '#16a34a' : badge === 'Overvalued' ? '#dc2626' : 'var(--ink-3)';
 
   return (
-    <div className="card" style={{ padding: 16, marginTop: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <div style={{ fontWeight: 600 }}>Fair Value</div>
-        {badge && (
-          <span style={{
-            fontSize: 12, padding: '2px 8px', borderRadius: 999,
-            background: badge === 'Undervalued' ? '#dcfce7' : badge === 'Overvalued' ? '#fee2e2' : '#f1f5f9',
-            color: badge === 'Undervalued' ? '#166534' : badge === 'Overvalued' ? '#991b1b' : '#475569',
-          }}>{badge}</span>
+    <>
+      <div style={{ fontSize: 11, color: 'var(--ink-3)', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', marginTop: 20, marginBottom: 8 }}>
+        Fair Value
+      </div>
+      <div className="col" style={{ background: 'var(--bg-1)', borderRadius: 14, border: '1px solid var(--hairline-soft)', overflow: 'hidden' }}>
+        <div className="row" style={{ padding: '12px 14px', alignItems: 'baseline' }}>
+          <div style={{ flex: 1 }}>
+            <Price usd={fv.point_estimate} size="sm"/>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--ink-4)', marginLeft: 8 }}>
+              (<Price usd={fv.low} size="sm"/>–<Price usd={fv.high} size="sm"/>)
+            </span>
+          </div>
+          {badge && (
+            <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: badgeColor }}>{badge}</div>
+          )}
+        </div>
+        {pred.grade_worthiness && (
+          <div className="row" style={{ padding: '12px 14px', borderTop: '1px solid var(--hairline-soft)' }}>
+            <div style={{ flex: 1, color: 'var(--ink-3)', fontSize: 13 }}>
+              {pred.grade_worthiness.worth_grading ? 'Worth grading' : 'Not worth grading'}
+            </div>
+            <div className="mono" style={{ fontSize: 13, color: pred.grade_worthiness.worth_grading ? '#16a34a' : 'var(--ink-4)' }}>
+              EV <Price usd={pred.grade_worthiness.expected_value} size="sm" sign/>
+            </div>
+          </div>
         )}
       </div>
-      <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>
-        <Price usd={fv.point_estimate} />
-        <span style={{ fontSize: 13, fontWeight: 400, color: '#64748b', marginLeft: 8 }}>
-          (<Price usd={fv.low} /> – <Price usd={fv.high} />)
-        </span>
-      </div>
-      {pred.grade_worthiness && (
-        <div style={{ fontSize: 13, marginTop: 8, color: pred.grade_worthiness.worth_grading ? '#166534' : '#64748b' }}>
-          {pred.grade_worthiness.worth_grading ? 'Worth grading — ' : 'Not worth grading — '}
-          estimated EV <Price usd={pred.grade_worthiness.expected_value} sign />
-          {' '}(est. gem rate {(pred.grade_worthiness.gem_rate_estimate * 100).toFixed(0)}%)
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 ```
 
-Wire it into `OverviewTab`'s render, immediately after the `PricePointChart` call found earlier at `screens/Detail.jsx:1446`:
+Wire it into `OverviewTab`'s render — **after the chart's `position: relative` wrapper closes, not inside it**. That wrapper (`screens/Detail.jsx:1446`) holds the chart plus absolutely-positioned `high`/`low`/`price snapshots` overlay labels anchored to its own fixed 160px height; a sibling inserted before the wrapper's closing `</div>` visually collides with those labels. Insert between the range-picker row and the existing "Price snapshot" section (found earlier at `screens/Detail.jsx:1483-1495`):
 
 ```jsx
-            <PricePointChart points={activePts} w={358} h={160} windowStart={chartWindowStart}/>
-            <FairValuePanel card={card} />
+      <div className="row" style={{ gap: 4, marginBottom: 22 }}>
+        {['1W', '1M', '3M', '1Y', 'ALL'].map(r => (
+          <button key={r} className="tap" onClick={() => setRange(r)} style={{
+            flex: 1, padding: '6px 0', borderRadius: 8,
+            background: range === r ? 'var(--bg-2)' : 'transparent',
+            color: range === r ? 'var(--ink)' : 'var(--ink-3)',
+            fontSize: 12, fontWeight: 600,
+          }}>{r}</button>
+        ))}
+      </div>
+
+      <FairValuePanel card={card} />
+
+      {/* Price snapshot — what we actually know about the current quote */}
 ```
 
-- [ ] **Step 3: Manual verification in the browser**
+(The comment line and everything from it onward already exists in the file — this just shows where `<FairValuePanel card={card} />` goes relative to it.)
 
-Run: `cd webapp && ./run.sh`, open `http://localhost:8000/`, navigate to any card's Detail screen, Overview tab.
-Expected: if a model has been fitted (`backfill_pricing_corpus.py` has been run at least once), a "Fair Value" panel appears below the price chart with a point estimate, range, and (for raw cards) a grade-worthiness line. If no model is fitted yet, the panel is silently absent — confirm no console errors from the failed `getPrediction` call.
+- [ ] **Step 3: Build and verify in the browser**
+
+```bash
+cd webapp/frontend && npm run build
+```
+
+This regenerates `webapp/static/dist/` from the source you just edited — required for the change to actually reach the running app (`app.py` serves `static/dist/` whenever it exists, which it does).
+
+Then: `cd ../.. && cd webapp && ./run.sh` (or however the dev server is normally started in your environment), open `http://localhost:8000/`, sign in, navigate to any card's Detail screen, Overview tab.
+Expected: if a model has been fitted (`backfill_pricing_corpus.py` has been run at least once) and the card's rarity/release-date resolve, a "Fair Value" section appears between the range-picker and "Price snapshot", with no visual overlap with the chart's high/low labels above it. If no model is fitted yet, or the card's data can't be resolved, the section is silently absent — confirm no console errors from the failed `getPrediction` call. If you cannot complete a real logged-in navigation (no test account / DATABASE_URL available), an isolated component mount in a real browser (as done during this task's original implementation attempt) is an acceptable substitute — but say explicitly which one you did.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add webapp/static/api.jsx webapp/static/screens/Detail.jsx
+git add webapp/frontend/src/api.js webapp/frontend/src/screens/Detail.jsx webapp/static/dist
 git commit -m "feat: Fair Value panel on card Detail screen"
 ```
 
