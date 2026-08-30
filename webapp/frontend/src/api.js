@@ -48,6 +48,7 @@ const P = {
   cardPhoto:           (cid) => `/api/cards/${cid}/photo`,
   cardPriceHistory:    (cid) => `/api/cards/${cid}/price-history`,
   cardPrediction:      (cid) => `/api/cards/${cid}/prediction`,
+  userRankings:        (uid, sort) => `/api/users/${uid}/rankings?sort=${sort}`,
   identify:            () => `/api/identify`,
   refreshPrice:        () => `/api/refresh-price`,
   refreshAll:          () => `/api/refresh-prices/run-now`,
@@ -431,6 +432,17 @@ export const api = {
       return await request(P.cardPrediction(cardId))
     } catch (e) {
       return null
+    }
+  },
+
+  // Collection ranked by valuation gap / upside / grade EV.
+  // Returns { rankings: [] } on failure so the screen can show an empty state.
+  async getRankings(userId, sort = 'undervalued') {
+    if (!userId) return { rankings: [] }
+    try {
+      return await request(P.userRankings(userId, sort))
+    } catch (e) {
+      return { rankings: [] }
     }
   },
 

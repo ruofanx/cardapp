@@ -230,6 +230,7 @@ function BrowseScreen({ tweaks, navigate, collection, reloadCollection, removeCa
         large
         title="Collection"
         right={<>
+          <button className="tap" onClick={() => navigate('rankings')} style={{ color: 'var(--ink-2)' }}><Icon name="arrow-up" size={20}/></button>
           <button className="tap" onClick={() => reloadCollection && reloadCollection()} style={{ color: 'var(--ink-2)' }}><Icon name="refresh" size={20}/></button>
           <button className="tap" onClick={() => navigate('scan')} style={{ color: 'var(--ink-2)' }}><Icon name="plus" size={22}/></button>
         </>}
