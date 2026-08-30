@@ -1178,13 +1178,13 @@ git commit -m "feat: dedicated SQLite data layer for pricing model artifacts"
 from __future__ import annotations
 
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from pricing_model import corpus, db as pmdb
-import os
-
 os.environ["PRICING_MODEL_DB"] = "/tmp/test_pricing_corpus.sqlite"
+
+from pricing_model import corpus, db as pmdb
 
 
 def _fresh_db():
