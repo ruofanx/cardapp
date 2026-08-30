@@ -36,7 +36,10 @@
   --shadow-pop: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 18px 48px -16px oklch(0 0 0 / 0.7);
 
   --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
-  --mono: ui-monospace, 'SF Mono', 'Menlo', monospace;
+  /* Native iOS apps (Wallet, Stocks, App Store) set numerals in SF Pro with
+   * tabular figures, not the SF Mono coding face — SF Mono's glyph shapes
+   * (slashed zero, single-story a) read as "code," not native UI. */
+  --mono: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', system-ui, sans-serif;
 
   --tap: 44px;
   --page-bg: oklch(0.08 0.005 250);
@@ -81,7 +84,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 button:focus { outline: none; }
 input, select, textarea { font: inherit; color: inherit; font-size: max(16px, 1em); }
 
-.mono { font-family: var(--mono); font-feature-settings: "tnum"; letter-spacing: 0; }
+.mono { font-family: var(--mono); font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .tnum { font-feature-settings: "tnum"; font-variant-numeric: tabular-nums; }
 
 /* The phone "screen" surface.
