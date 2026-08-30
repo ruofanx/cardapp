@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import api, { setAuthToken, setCurrentProfileId } from './api.js'
 import { supabase } from './supabase.js'
 import { configurePurchases, logOutPurchases } from './purchases.js'
@@ -268,24 +268,6 @@ export default function App() {
     },
   }
 
-  let Screen
-  switch (top.screen) {
-    case 'home':       Screen = HomeScreen; break
-    case 'browse':     Screen = BrowseScreen; break
-    case 'scan':       Screen = ScanScreen; break
-    case 'detail':     Screen = DetailScreen; break
-    case 'bulk':       Screen = BulkScreen; break
-    case 'trade':      Screen = TradeScreen; break
-    case 'settings':   Screen = SettingsScreen; break
-    case 'onboarding':    Screen = OnboardingScreen ?? SettingsScreen; break
-    case 'add-profile':   Screen = AddProfileScreen; break
-    case 'want-list':     Screen = WantListScreen; break
-    case 'trade-show':    Screen = TradeShowScreen; break
-    case 'alerts':        Screen = AlertsScreen; break
-    case 'insights':      Screen = InsightsScreen; break
-    default:              Screen = HomeScreen
-  }
-
   const hideTabBar = top.screen === 'onboarding' || top.screen === 'detail' || top.screen === 'bulk' || top.screen === 'trade' || top.screen === 'scan' || top.screen === 'want-list' || top.screen === 'add-profile' || top.screen === 'trade-show' || top.screen === 'alerts' || top.screen === 'insights'
 
   if (!authed) {
@@ -295,7 +277,7 @@ export default function App() {
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
       {backend.online === false && <BackendBanner backend={backend} onRetry={() => reloadCollection(currentUser?.id)}/>}
-      <Screen {...screenProps} key={top.screen}/>
+      <NavStack stack={stack} goBack={goBack} screenProps={screenProps}/>
       {!hideTabBar && (
         <BottomTabBar
           tab={tab} navigate={navigate}
@@ -305,6 +287,154 @@ export default function App() {
         />
       )}
       <TweaksHook t={t} setTweak={setTweak}/>
+    </div>
+  )
+}
+
+function screenComponentFor(name) {
+  switch (name) {
+    case 'home':         return HomeScreen
+    case 'browse':       return BrowseScreen
+    case 'scan':         return ScanScreen
+    case 'detail':       return DetailScreen
+    case 'bulk':         return BulkScreen
+    case 'trade':        return TradeScreen
+    case 'settings':     return SettingsScreen
+    case 'onboarding':   return OnboardingScreen ?? SettingsScreen
+    case 'add-profile':  return AddProfileScreen
+    case 'want-list':    return WantListScreen
+    case 'trade-show':   return TradeShowScreen
+    case 'alerts':       return AlertsScreen
+    case 'insights':     return InsightsScreen
+    default:              return HomeScreen
+  }
+}
+
+// iOS-style interactive edge-swipe-to-go-back: a touch starting within
+// EDGE_ZONE px of the left edge drags the current screen out 1:1 with the
+// finger while the previous stack entry peeks in behind it (parallax +
+// scrim), mirroring UINavigationController's interactivePopGestureRecognizer.
+// Registered with native (non-passive) listeners via a ref, since React's
+// synthetic touchmove handler is passive and can't preventDefault to stop
+// a screen's own vertical scroll from fighting the horizontal drag.
+const EDGE_ZONE = 24
+const COMMIT_RATIO = 0.33
+const COMMIT_VELOCITY = 0.5 // px/ms
+const SETTLE_MS = 300
+
+function NavStack({ stack, goBack, screenProps }) {
+  const top = stack[stack.length - 1]
+  const prevEntry = stack.length > 1 ? stack[stack.length - 2] : null
+  const canGoBack = stack.length > 1
+
+  const containerRef = useRef(null)
+  const topRef = useRef(null)
+  const prevRef = useRef(null)
+  const scrimRef = useRef(null)
+  const dragRef = useRef(null)
+  const [showPrev, setShowPrev] = useState(false)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    function applyProgress(x, width, animated) {
+      const progress = width > 0 ? x / width : 0
+      if (topRef.current) {
+        topRef.current.style.transition = animated ? `transform ${SETTLE_MS}ms cubic-bezier(0.22,1,0.36,1)` : 'none'
+        topRef.current.style.transform = `translateX(${x}px)`
+        topRef.current.style.boxShadow = progress > 0 ? '-8px 0 24px oklch(0 0 0 / 0.35)' : 'none'
+      }
+      if (prevRef.current) {
+        prevRef.current.style.transition = animated ? `transform ${SETTLE_MS}ms cubic-bezier(0.22,1,0.36,1)` : 'none'
+        prevRef.current.style.transform = `translateX(${(progress - 1) * width * 0.3}px)`
+      }
+      if (scrimRef.current) {
+        scrimRef.current.style.transition = animated ? `opacity ${SETTLE_MS}ms cubic-bezier(0.22,1,0.36,1)` : 'none'
+        scrimRef.current.style.opacity = String(0.15 * (1 - progress))
+      }
+    }
+
+    function settle(commit, width) {
+      applyProgress(commit ? width : 0, width, true)
+      window.setTimeout(() => {
+        if (topRef.current) { topRef.current.style.transition = ''; topRef.current.style.transform = ''; topRef.current.style.boxShadow = '' }
+        if (prevRef.current) { prevRef.current.style.transition = ''; prevRef.current.style.transform = '' }
+        if (scrimRef.current) { scrimRef.current.style.transition = ''; scrimRef.current.style.opacity = '' }
+        setShowPrev(false)
+        if (commit) goBack()
+      }, SETTLE_MS)
+    }
+
+    function onTouchStart(e) {
+      if (!canGoBack || dragRef.current) return
+      const t = e.touches[0]
+      if (t.clientX > EDGE_ZONE) return
+      dragRef.current = {
+        startX: t.clientX, startY: t.clientY, startT: performance.now(),
+        active: false, width: el.offsetWidth, lastX: 0, lastT: performance.now(),
+      }
+    }
+
+    function onTouchMove(e) {
+      const d = dragRef.current
+      if (!d) return
+      const t = e.touches[0]
+      const dx = t.clientX - d.startX
+      const dy = t.clientY - d.startY
+      if (!d.active) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
+        if (Math.abs(dy) >= Math.abs(dx) || dx <= 0) { dragRef.current = null; return }
+        d.active = true
+        setShowPrev(true)
+      }
+      e.preventDefault()
+      const clamped = Math.max(0, Math.min(dx, d.width))
+      d.lastX = clamped
+      d.lastT = performance.now()
+      applyProgress(clamped, d.width, false)
+    }
+
+    function onTouchEnd() {
+      const d = dragRef.current
+      dragRef.current = null
+      if (!d || !d.active) return
+      const velocity = d.lastX / Math.max(1, d.lastT - d.startT)
+      const commit = d.lastX > d.width * COMMIT_RATIO || velocity > COMMIT_VELOCITY
+      settle(commit, d.width)
+    }
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd, { passive: true })
+    el.addEventListener('touchcancel', onTouchEnd, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+    }
+  }, [canGoBack, goBack])
+
+  const TopScreen = screenComponentFor(top.screen)
+  const PrevScreen = prevEntry ? screenComponentFor(prevEntry.screen) : null
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}>
+      {showPrev && PrevScreen && (
+        <div ref={prevRef} style={{ position: 'absolute', inset: 0, height: '100%', willChange: 'transform' }}>
+          <PrevScreen {...screenProps} params={prevEntry.params} key={'prev-' + prevEntry.screen}/>
+          <div ref={scrimRef} style={{ position: 'absolute', inset: 0, background: '#000', pointerEvents: 'none' }}/>
+        </div>
+      )}
+      <div
+        ref={topRef}
+        style={showPrev
+          ? { position: 'absolute', inset: 0, height: '100%', willChange: 'transform' }
+          : { position: 'relative', height: '100%' }}
+      >
+        <TopScreen {...screenProps} key={top.screen}/>
+      </div>
     </div>
   )
 }
