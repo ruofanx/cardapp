@@ -422,7 +422,7 @@ function NavStack({ stack, goBack, screenProps }) {
   return (
     <div ref={containerRef} style={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}>
       {showPrev && PrevScreen && (
-        <div ref={prevRef} style={{ position: 'absolute', inset: 0, height: '100%', willChange: 'transform' }}>
+        <div ref={prevRef} style={{ position: 'absolute', inset: 0, height: '100%', display: 'flex', flexDirection: 'column', willChange: 'transform' }}>
           <PrevScreen {...screenProps} params={prevEntry.params} key={'prev-' + prevEntry.screen}/>
           <div ref={scrimRef} style={{ position: 'absolute', inset: 0, background: '#000', pointerEvents: 'none' }}/>
         </div>
@@ -430,8 +430,8 @@ function NavStack({ stack, goBack, screenProps }) {
       <div
         ref={topRef}
         style={showPrev
-          ? { position: 'absolute', inset: 0, height: '100%', willChange: 'transform' }
-          : { position: 'relative', height: '100%' }}
+          ? { position: 'absolute', inset: 0, height: '100%', display: 'flex', flexDirection: 'column', willChange: 'transform' }
+          : { position: 'relative', height: '100%', display: 'flex', flexDirection: 'column' }}
       >
         <TopScreen {...screenProps} key={top.screen}/>
       </div>
