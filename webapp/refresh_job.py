@@ -28,6 +28,7 @@ import db
 import pricecharting_lookup
 import raw_price_resolver
 import price_history_refresh
+import pricing_model.jobs as pricing_model_jobs
 
 log = logging.getLogger(__name__)
 
@@ -146,10 +147,19 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=6 * 60 * 60,   # 6 hour grace
     )
+    _scheduler.add_job(
+        pricing_model_jobs.monthly_refit,
+        CronTrigger(day="1", hour=5, minute=0, timezone=DAILY_TIMEZONE),
+        id="monthly_pricing_model_refit",
+        name="Monthly pricing-model corpus refresh + refit (1st @ 5am CT)",
+        replace_existing=True,
+        misfire_grace_time=24 * 60 * 60,   # 1 day grace
+    )
     _scheduler.start()
     log.info("Scheduler started: daily price refresh @ %02d:00 %s, "
-             "weekly price-history refresh Sun 06:00 %s",
-             DAILY_HOUR_LOCAL, DAILY_TIMEZONE, DAILY_TIMEZONE)
+             "weekly price-history refresh Sun 06:00 %s, "
+             "monthly pricing-model refit 1st @ 05:00 %s",
+             DAILY_HOUR_LOCAL, DAILY_TIMEZONE, DAILY_TIMEZONE, DAILY_TIMEZONE)
     return _scheduler
 
 
