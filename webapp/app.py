@@ -17,6 +17,7 @@ Static frontend served from ./static/index.html at /.
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import sys
 import os
@@ -62,7 +63,7 @@ import pricecharting_lookup
 import ebay_lookup
 import raw_price_resolver
 import pricing_model.db as pricing_db
-from pricing_model.features import build_card_features
+from pricing_model.features import build_card_features, months_since_release
 from pricing_model.predict import grade_worthiness, predict_psa10_price, predict_raw_price
 
 app = FastAPI(title="Pokemon Trading Claude")
@@ -86,6 +87,10 @@ def _startup():
             db.run_migrations()
     except Exception as e:
         log.warning("schema migration failed: %s", e)
+    try:
+        pricing_db.init_db()
+    except Exception as e:
+        log.warning("pricing_model database initialization failed: %s", e)
     # Start the daily refresh scheduler (7am CT). Safe if already running.
     try:
         from refresh_job import start_scheduler
@@ -692,10 +697,23 @@ async def _resolve_rarity_and_release_date(card: "db.Card") -> tuple[Optional[st
         # below turns this into a 422 rather than guessing from an EN
         # lookup that wouldn't actually match a CN-exclusive card.
         return None, None
-    candidates = await card_lookup.search_cards(f'{card.name} set:"{card.set_name}"', limit=1)
-    if not candidates:
+    # search_cards is a free-text parser, NOT Lucene -- it does not accept
+    # `field:"value"` syntax. Passing that as literal text falls through its
+    # fallback chain and can return a candidate from ANY set (ordered by
+    # release date), which would silently cache the WRONG print's rarity.
+    # Plain free text + explicit post-hoc set matching avoids that; skip live
+    # price fetching too, since a rarity lookup has no use for it (also
+    # avoids an unnecessary PriceCharting scrape on every first prediction).
+    candidates = await card_lookup.search_cards(
+        f"{card.name} {card.set_name}", limit=5, attach_live_prices=False,
+    )
+    match = next(
+        (c for c in candidates if (c.set_name or "").strip().lower() == (card.set_name or "").strip().lower()),
+        None,
+    )
+    if match is None:
         return None, None
-    rarity = candidates[0].rarity
+    rarity = match.rarity
     release_date = await _resolve_set_release_date(card.set_name)
     return rarity, release_date
 
@@ -786,6 +804,14 @@ async def card_prediction(card_id: int):
             raise HTTPException(422, f"unmapped rarity {rarity_raw!r} — no prediction available")
         pricing_db.upsert_card_features(card_id, features)
 
+    # months_since_release is the model's only time-varying term. A cached
+    # `features` row can be arbitrarily old (computed whenever this card's
+    # Detail screen was first opened) -- recompute it from release_date
+    # every call so the lifecycle multiplier doesn't silently go stale.
+    # Freshly-built features above already have a correct value, so this is
+    # a harmless no-op in that branch (release_date hasn't changed).
+    features = dataclasses.replace(features, months_since_release=months_since_release(features.release_date))
+
     raw_pred = predict_raw_price(features, run)
     psa10_pred = predict_psa10_price(features, run)
     ev = None if card.is_graded else grade_worthiness(features, run)
@@ -820,7 +846,8 @@ async def card_prediction(card_id: int):
 
 
 @app.get("/api/users/{user_id}/rankings")
-def user_rankings(user_id: int, sort: str = "undervalued"):
+def user_rankings(user_id: int, sort: str = "undervalued",
+                   account: dict = Depends(get_current_account)):
     """Rank a user's collection by valuation gap, combined upside, or grade
     EV. Cards with no stored features (never viewed via the prediction
     endpoint yet) are silently skipped rather than erroring — this is a

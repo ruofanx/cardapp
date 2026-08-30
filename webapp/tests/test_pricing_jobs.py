@@ -74,3 +74,27 @@ def test_monthly_refit_accepts_new_fit_when_it_is_better():
     assert result["kept_previous"] is False
     latest = pmdb.get_latest_model_run()
     assert latest.r_squared_raw == 0.9
+
+
+def test_monthly_refit_survives_harvest_failure_and_keeps_previous_run():
+    """Fix 7 (final-review pass): a harvest/fit exception must not crash the
+    scheduled job -- it should log and report kept_previous, leaving whatever
+    model run was already active untouched."""
+    _fresh_db()
+    _seed_minimal_corpus()
+
+    existing_run = pmdb.ModelRun(
+        id=None, fitted_at="", coefficients_raw={"intercept": 1.0}, coefficients_psa10={},
+        lifecycle_curve={}, market_index={}, psa9_fraction=0.4,
+        residual_std_raw=0.05, residual_std_psa10=0.0,
+        r_squared_raw=0.8, r_squared_psa10=0.0, n_cards=500,
+    )
+    pmdb.save_model_run(existing_run)
+
+    with patch("pricing_model.corpus.harvest_all", new=AsyncMock(side_effect=RuntimeError("harvest boom"))):
+        result = asyncio.run(jobs.monthly_refit())
+
+    assert result["kept_previous"] is True
+    assert "harvest boom" in result["error"]
+    latest = pmdb.get_latest_model_run()
+    assert latest.r_squared_raw == 0.8  # untouched

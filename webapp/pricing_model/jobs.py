@@ -17,11 +17,16 @@ MIN_R_SQUARED_IMPROVEMENT = -0.05  # allow small noise-driven dips, reject real 
 
 
 async def monthly_refit() -> dict:
-    harvest_summary = await corpus.harvest_all()
+    pmdb.init_db()  # idempotent -- guards a fresh/empty DB file on first run
+    try:
+        harvest_summary = await corpus.harvest_all()
 
-    cards = pmdb.get_all_corpus_cards()
-    history = pmdb.get_all_corpus_history()
-    new_run = pm.fit_model(cards, history)
+        cards = pmdb.get_all_corpus_cards()
+        history = pmdb.get_all_corpus_history()
+        new_run = pm.fit_model(cards, history)
+    except Exception as e:
+        log.exception("pricing_model monthly refit failed during harvest/fit")
+        return {"kept_previous": True, "error": str(e)}
 
     previous = pmdb.get_latest_model_run()
     if previous is not None and new_run.r_squared_raw < previous.r_squared_raw + MIN_R_SQUARED_IMPROVEMENT:

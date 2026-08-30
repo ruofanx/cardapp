@@ -103,6 +103,23 @@ def _market_index(history: dict[str, list[tuple[str, float]]]) -> dict[str, floa
         ratios = [curr_prices[k] / prev_prices[k] for k in common_keys if prev_prices[k] > 0]
         link = statistics.median(ratios) if ratios else 1.0
         index[month] = index[prev_month] * link
+
+    # Normalize so the LATEST month is 1.0. Training divides latest_price by
+    # idx (the index at the card's own latest observation) to isolate
+    # fundamentals -- but idx is only ever looked up at each card's most
+    # recent month, so re-basing the whole index to the panel's last month
+    # doesn't change any training target (every idx value used in fit_model
+    # is itself renormalized by the same constant, which cancels in the
+    # division). It DOES make the stored index directly usable at prediction
+    # time: "the market is at 1.0" means "at the level of the training
+    # corpus's most recent data," so a caller can read market drift directly,
+    # and critically, it means callers who don't re-apply an index term
+    # (like predict.py, which applies the fundamentals + lifecycle multiplier
+    # only) get an unbiased answer relative to "now" instead of relative to
+    # the panel's arbitrary first month.
+    last_value = index[months[-1]]
+    if last_value > 0:
+        index = {m: v / last_value for m, v in index.items()}
     return index
 
 

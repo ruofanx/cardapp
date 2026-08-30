@@ -6,6 +6,8 @@ import random
 
 from pricing_model import model as pm
 from pricing_model.db import CorpusCardRow
+from pricing_model.features import CardFeatures
+from pricing_model.predict import predict_raw_price
 
 
 def _synthetic_corpus(n: int = 80, seed: int = 7):
@@ -138,3 +140,65 @@ def test_fit_model_recovers_non_flat_lifecycle_shape_under_staggered_releases():
     # The recovery bin (36+, true 1.1) must likewise read higher than the
     # trough, not collapse to the same level.
     assert curve["36+"] > curve["9-12"] * 1.1
+
+
+def _flat_lifecycle_market_trend_corpus(n: int = 100, seed: int = 3, monthly_growth: float = 1.02):
+    """Flat lifecycle (every card released well before the panel window, so
+    all of them sit in the '36+' bin -- no age-dependent shape to recover)
+    plus a KNOWN, real +2%/month market trend across 24 calendar months.
+
+    This isolates the market-index re-application bug from Fix 1: with a
+    flat lifecycle, `lifecycle_multiplier` is constant, so any systematic
+    gap between the predicted price and the true LATEST price can only come
+    from the market index term."""
+    random.seed(seed)
+    calendar_months = [f"2023-{m:02d}" for m in range(1, 13)] + [f"2024-{m:02d}" for m in range(1, 13)]
+    base_price = 20.0
+    cards = []
+    history = {}
+    for i in range(n):
+        card_key = f"trend-{i}"
+        cards.append(CorpusCardRow(
+            card_key=card_key, name=f"Card {i}", set_name="Trend Set",
+            card_number=str(i), rarity_raw="Rare Holo", era="sv", language="english",
+            release_date="2015-01-01",  # old enough to always land in the "36+" bin
+            psa10_price_usd=None, grade9_price_usd=None,
+        ))
+        points = []
+        for month_idx, month in enumerate(calendar_months):
+            true_price = base_price * (monthly_growth ** month_idx)
+            noise = random.uniform(0.98, 1.02)
+            points.append((month, true_price * noise))
+        history[card_key] = points
+    return cards, history, base_price, calendar_months, monthly_growth
+
+
+def test_predict_raw_price_lands_near_latest_true_price_under_market_trend():
+    """Regression guard for the market-index-never-reapplied bug: predict.py
+    only re-applies the lifecycle multiplier, never the market index, so the
+    index must be re-based (in _market_index) so the model's intercept
+    already encodes 'relative to now'. Before that fix, this prediction
+    would land near the OLD (first-month) price level, off by a factor of
+    ~1/index_at_latest_month -- here that's ~1.57x too low, not noise."""
+    cards, history, base_price, calendar_months, monthly_growth = _flat_lifecycle_market_trend_corpus()
+    run = pm.fit_model(cards, history)
+
+    n_months = len(calendar_months) - 1
+    true_latest_price = base_price * (monthly_growth ** n_months)
+
+    from pricing_model import pull_rates, rarity_map
+    tier = rarity_map.normalize_rarity("Rare Holo")
+    scarcity = pull_rates.pull_rate_scarcity("sv", tier, "Trend Set", cards_in_tier=1)
+
+    features = CardFeatures(
+        canonical_rarity=tier, pull_scarcity=scarcity, gem_rate=0.5,
+        character_tier="C", is_trainer_art=False, language="english",
+        era="sv", release_date="2015-01-01", months_since_release=200.0,
+    )
+    pred = predict_raw_price(features, run)
+
+    ratio = pred.point_estimate / true_latest_price
+    assert 0.85 < ratio < 1.15, (
+        f"predicted/true ratio {ratio:.3f} is not near 1.0 -- market index is "
+        f"not being correctly folded into the prediction"
+    )

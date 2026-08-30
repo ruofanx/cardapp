@@ -11,7 +11,10 @@ from fastapi.testclient import TestClient
 
 import app as app_module
 import pricing_model.db as pmdb
+from auth import get_current_account
 from pricing_model.features import CardFeatures
+
+_FAKE_ACCOUNT = {"id": "test-account-id", "email": "test@example.com", "plan": "free", "trial_ends_at": None}
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +23,19 @@ def fresh_pricing_db():
         pmdb.DB_PATH.unlink()
     pmdb.init_db()
     yield
+
+
+@pytest.fixture(autouse=True)
+def fake_auth():
+    """/api/users/{user_id}/rankings now requires get_current_account (Fix 4
+    of the final-review pass). Override the dependency with a minimal fake
+    account rather than exercising real Supabase JWT verification, matching
+    FastAPI's standard TestClient auth-bypass pattern -- this codebase has no
+    existing convention for authenticated-endpoint tests (test_auth.py only
+    unit-tests get_current_account directly, not through an endpoint)."""
+    app_module.app.dependency_overrides[get_current_account] = lambda: _FAKE_ACCOUNT
+    yield
+    app_module.app.dependency_overrides.pop(get_current_account, None)
 
 
 def _fake_card(card_id: int, **overrides):

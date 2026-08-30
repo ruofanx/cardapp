@@ -1,7 +1,7 @@
 # PokeCollect — CardApp
 
 Pokemon card collection tracker + trade tool for Ro, Reid, and Ryan.
-FastAPI backend + React/Babel PWA frontend, served together on port 8000.
+FastAPI backend + React/Vite PWA frontend, served together on port 8000.
 
 ## Project layout
 
@@ -22,27 +22,15 @@ FastAPI backend + React/Babel PWA frontend, served together on port 8000.
 │   ├── price_history_refresh.py # PriceCharting chart-data → price_history (weekly job + manual backfill)
 │   ├── trade_proposer.py    # Subset-sum trade matcher
 │   ├── run.sh               # Start server: uvicorn app:app --reload --port 8000
+│   ├── pricing_model/        # Fair-value prediction model (see Pricing prediction model)
+│   ├── backfill_pricing_corpus.py  # One-off CLI: harvest the pricing_model training corpus
 │   ├── pokemon_trading.sqlite      # Main DB (gitignored)
 │   ├── ebay_cache.sqlite           # 24h eBay cache (gitignored)
 │   ├── pricecharting_cache.sqlite  # 24h PC cache (gitignored)
+│   ├── pricing_model.sqlite        # Pricing model corpus + fitted runs (gitignored)
 │   ├── uploads/             # User card photos (gitignored)
-│   └── static/              # React+Babel frontend (served by FastAPI)
-│       ├── index.html       # Entry point; Babel-standalone transpiles JSX in-browser
-│       ├── api.jsx          # All fetch calls to the backend
-│       ├── app.jsx          # Navigation stack, global state, user switching
-│       ├── components.jsx   # Shared UI: CardArt, Price, Sparkline, Icon, NavBar…
-│       ├── data.jsx         # Mock/seed data, CARDS constant
-│       ├── styles.css       # CSS custom properties, layout primitives
-│       ├── ios-frame.jsx    # iOS chrome wrapper
-│       ├── tweaks-panel.jsx # Dev tweaks overlay
-│       └── screens/
-│           ├── Detail.jsx   # Card detail — pricing chart, sold listings, variants
-│           ├── Browse.jsx   # Collection grid + filters
-│           ├── Home.jsx     # Portfolio summary + sparklines
-│           ├── Scan.jsx     # Camera / search to add cards
-│           ├── Bulk.jsx     # Bulk import
-│           ├── Trade.jsx    # Trade proposal screen
-│           └── SettingsAndOnboarding.jsx
+│   ├── frontend/src/        # REAL frontend — Vite + React app (see Frontend architecture)
+│   └── static/              # Build output (dist/) + legacy dead code (see Frontend architecture)
 ```
 
 ## Running the app
@@ -86,8 +74,10 @@ fixed 2026-06-07 by reordering the mounts.)
 | POST | `/api/sold-listings` | eBay sold listings for a card |
 | POST | `/api/trade/propose` | Subset-sum trade proposal |
 | POST | `/api/refresh-prices/run-now` | Trigger full refresh |
+| GET | `/api/cards/{id}/prediction` | Fair-value prediction (see Pricing prediction model) |
+| GET | `/api/users/{uid}/rankings` | Collection ranked by valuation gap / upside / grade EV |
 
-**refresh-price quirk:** returns `{estimated_price, source, image_url}` but does NOT update the DB. `api.jsx` POSTs here then PATCHes `/api/cards/{id}` separately.
+**refresh-price quirk:** returns `{estimated_price, source, image_url}` but does NOT update the DB. `api.js` POSTs here then PATCHes `/api/cards/{id}` separately.
 
 ## Pricing logic
 
@@ -142,12 +132,58 @@ CGC/BGS/SGC: half-grades + a 10.5 sentinel for top grades:
 - BGS 10.5 = BGS 10 Black Label
 - SGC 10.5 = SGC 10 Pristine
 
+## Pricing prediction model (`webapp/pricing_model/`)
+
+A separate fundamentals-based fair-value model — not the current-market-price
+pipeline above. Given a card's rarity, era, language, pull scarcity, character
+tier, and age-since-release, it predicts what the card *should* trade for
+(raw and PSA10), with a confidence band and a per-factor multiplier
+breakdown, plus a grade-worthiness EV. Exposed via `GET
+/api/cards/{id}/prediction` and `GET /api/users/{id}/rankings` (the latter
+ranks a user's collection by valuation gap / upside / grade EV; both require
+auth).
+
+Model core (`model.py`): a chain-linked market index (captures "everything
+moved together"), a median-polish lifecycle curve (age-dependent
+hype→trough→recovery shape), and a cross-sectional ridge regression on the
+remaining fundamentals — see the module's docstrings for why each stage is
+built the way it is (naive per-card anchoring biases both the index and the
+curve under PriceCharting's calendar-anchored, not release-anchored, history
+window).
+
+Storage: `webapp/pricing_model.sqlite`, a dedicated SQLite file — deliberately
+separate from `db.py`/`db_postgres.py` (the main app db has a SQLite/Postgres
+split depending on environment, which would make a shared file ambiguous;
+this follows the same one-file-per-subsystem precedent as
+`pricecharting_cache.sqlite`). `pricing_model.db.init_db()` runs at app
+startup and is idempotent — safe to call repeatedly.
+
+Training corpus: one-time backfill via `backfill_pricing_corpus.py` (harvests
+Pokemon TCG API + PriceCharting into `corpus_cards`/`corpus_history`), then a
+monthly scheduled refit (`refresh_job.py` → `pricing_model.jobs.monthly_refit`,
+1st of the month @ 5am CT) that re-harvests and re-fits, keeping the previous
+model run active if the new fit's R² regresses.
+
 ## Frontend architecture
 
-React 18 + Babel-standalone (transpiled in-browser, no build step).
-Custom navigation stack in `app.jsx` — no React Router.
-`index.html` rewrites every `<script type=text/babel>` to `?v=${Date.now()}`
-to bust the browser cache on reload. Do not remove this.
+**`webapp/frontend/src/` is the real, live frontend** — a Vite + React app.
+Build it with `npm run build` from that directory; the build output goes to
+`webapp/static/dist/`, which `app.py`'s catch-all static mount (`STATIC_DIR`
+resolution near the bottom of `app.py`) serves whenever `dist/index.html`
+exists, falling back to plain `webapp/static/` only if it doesn't. For local
+dev, run `npm run dev` in `frontend/` (Vite dev server) or just build once and
+let `:8000` serve the `dist/` output — either way, `:8000` remains the only
+backend to run.
+
+`webapp/static/*.jsx` (the old React+Babel-standalone, no-build-step frontend
+described in earlier revisions of this doc) is **legacy, dead code** — it is
+shadowed at runtime by `static/dist/` and is kept only for historical
+reference. Do not implement new frontend work against it: this exact mistake
+already happened twice on the pricing-prediction-model plan (the Fair Value
+panel and the Rankings screen were both first built against `static/*.jsx`
+before being redone against `frontend/src/`).
+
+Custom navigation stack in `frontend/src/app.jsx` — no React Router.
 
 ### Card data shape (frontend)
 `api.normalizeCard` maps the backend row to:
@@ -187,7 +223,7 @@ view. Toggle entry points: Scan result screen + Detail screen star button.
 When backend is unreachable, `app.jsx` sets `backend.online = false`,
 fills collection with `window.CARDS` mock data, shows an orange offline banner.
 
-### Backend URL resolution (api.jsx)
+### Backend URL resolution (api.js)
 1. `window.POKECOLLECT_API` (set before scripts load)
 2. `window.location.hostname:8000`
 3. `localhost:8000`
