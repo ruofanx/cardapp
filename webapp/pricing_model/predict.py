@@ -87,3 +87,41 @@ def predict_psa10_price(features: CardFeatures, run: ModelRun) -> Prediction | N
         point_estimate=point, low=low, high=high, breakdown=breakdown,
         lifecycle_multiplier=mult, r_squared=run.r_squared_psa10,
     )
+
+
+DEFAULT_GRADING_FEE_USD = 25.0
+
+
+@dataclass
+class GradeEV:
+    expected_value: float
+    raw_price: float
+    predicted_psa10: float
+    predicted_psa9: float
+    gem_rate: float
+    grading_fee: float
+    worth_grading: bool
+
+
+def grade_worthiness(features: CardFeatures, run: ModelRun,
+                      grading_fee: float = DEFAULT_GRADING_FEE_USD) -> GradeEV | None:
+    psa10_pred = predict_psa10_price(features, run)
+    if psa10_pred is None:
+        return None
+    raw_pred = predict_raw_price(features, run)
+
+    predicted_psa10 = psa10_pred.point_estimate
+    predicted_psa9 = predicted_psa10 * run.psa9_fraction
+    gem = features.gem_rate
+
+    ev = (gem * predicted_psa10 + (1 - gem) * predicted_psa9) - grading_fee - raw_pred.point_estimate
+
+    # Worth grading needs a real margin, not just EV > 0 — grading has
+    # non-priced friction (turnaround time, shipping risk).
+    margin_threshold = grading_fee * 0.5
+    return GradeEV(
+        expected_value=ev, raw_price=raw_pred.point_estimate,
+        predicted_psa10=predicted_psa10, predicted_psa9=predicted_psa9,
+        gem_rate=gem, grading_fee=grading_fee,
+        worth_grading=ev > margin_threshold,
+    )
