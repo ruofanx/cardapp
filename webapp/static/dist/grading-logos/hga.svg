@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 28">
+  <!-- HGA purple background -->
+  <rect width="72" height="28" fill="#5B21B6" rx="2"/>
+  <!-- HGA text -->
+  <text x="36" y="20" text-anchor="middle" fill="white"
+    font-family="Arial Black, Impact, sans-serif"
+    font-weight="900" font-size="16" letter-spacing="2">HGA</text>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 28">
+  <!-- SGC dark background -->
+  <rect width="72" height="28" fill="#1A1A1A" rx="2"/>
+  <!-- Red accent bar at bottom -->
+  <rect x="0" y="25" width="72" height="3" fill="#E53935" rx="1"/>
+  <!-- SGC text in white -->
+  <text x="36" y="20" text-anchor="middle" fill="white"
+    font-family="Arial Black, Impact, sans-serif"
+    font-weight="900" font-size="16" letter-spacing="2">SGC</text>
+</svg>
