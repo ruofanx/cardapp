@@ -253,6 +253,8 @@ async def median_relevant_price(
         parts.append(ascii_set if ascii_set else set_name.strip())
     if language.lower() == "japanese":
         parts.append("Japanese")
+    elif language.lower() == "chinese":
+        parts.append("Chinese")
     if grade_company and grade is not None:
         grade_str = str(int(grade)) if grade == int(grade) else str(grade)
         parts.append(f"{grade_company} {grade_str}")
@@ -289,9 +291,9 @@ async def median_relevant_price(
             continue
         if re.search(r'\b\d+\s*cards?\b', t) and "1 card" not in t:
             continue
-        # If the user is searching for the JP version, drop Korean
+        # If the user is searching for the JP or CH version, drop Korean
         # listings (they're a different print with different prices).
-        if language.lower() == "japanese" and "korean" in t:
+        if language.lower() in ("japanese", "chinese") and "korean" in t:
             continue
         # Drop graded listings unless the user explicitly wanted graded.
         # (?<!\w) catches "PSA10" (no space) as well as "PSA 10".
@@ -464,6 +466,8 @@ async def lookup_sealed_image(
         parts.append(product_term)
     if language.lower() == "japanese":
         parts.append("Japanese")
+    elif language.lower() == "chinese":
+        parts.append("Chinese")
     query = " ".join(p for p in parts if p)
 
     items = await search_items(query, limit=10, category_id=None)
@@ -506,6 +510,8 @@ async def median_sealed_active_price(
         parts.append(product_term)
     if language.lower() == "japanese":
         parts.append("Japanese")
+    elif language.lower() == "chinese":
+        parts.append("Chinese")
     query = " ".join(p for p in parts if p)
 
     items = await search_items(query, limit=max(sample_size * 2, 20), category_id=None)

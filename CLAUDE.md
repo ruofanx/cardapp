@@ -26,23 +26,16 @@ FastAPI backend + React/Babel PWA frontend, served together on port 8000.
 │   ├── ebay_cache.sqlite           # 24h eBay cache (gitignored)
 │   ├── pricecharting_cache.sqlite  # 24h PC cache (gitignored)
 │   ├── uploads/             # User card photos (gitignored)
-│   └── static/              # React+Babel frontend (served by FastAPI)
-│       ├── index.html       # Entry point; Babel-standalone transpiles JSX in-browser
-│       ├── api.jsx          # All fetch calls to the backend
-│       ├── app.jsx          # Navigation stack, global state, user switching
-│       ├── components.jsx   # Shared UI: CardArt, Price, Sparkline, Icon, NavBar…
-│       ├── data.jsx         # Mock/seed data, CARDS constant
-│       ├── styles.css       # CSS custom properties, layout primitives
-│       ├── ios-frame.jsx    # iOS chrome wrapper
-│       ├── tweaks-panel.jsx # Dev tweaks overlay
-│       └── screens/
-│           ├── Detail.jsx   # Card detail — pricing chart, sold listings, variants
-│           ├── Browse.jsx   # Collection grid + filters
-│           ├── Home.jsx     # Portfolio summary + sparklines
-│           ├── Scan.jsx     # Camera / search to add cards
-│           ├── Bulk.jsx     # Bulk import
-│           ├── Trade.jsx    # Trade proposal screen
-│           └── SettingsAndOnboarding.jsx
+│   ├── frontend/            # REAL frontend source — Vite + React, builds to static/dist/
+│   │   ├── src/
+│   │   │   ├── api.js, app.jsx, components.jsx, data.js, Login.jsx
+│   │   │   └── screens/     # Detail.jsx, Browse.jsx, Home.jsx, Scan.jsx, Insights.jsx, ...
+│   │   ├── vite.config.js   # outDir: ../static/dist (see Frontend architecture)
+│   │   └── node_modules/    # gitignored — `npm install` here before `npm run build`
+│   └── static/
+│       ├── dist/            # BUILT output FastAPI actually serves — commit after `npm run build`
+│       └── screens/*.jsx, app.jsx, api.jsx, ...  # LEGACY Babel-standalone frontend, unused
+│                                                  # by the running server since the Vite migration
 ```
 
 ## Running the app
@@ -144,10 +137,27 @@ CGC/BGS/SGC: half-grades + a 10.5 sentinel for top grades:
 
 ## Frontend architecture
 
-React 18 + Babel-standalone (transpiled in-browser, no build step).
-Custom navigation stack in `app.jsx` — no React Router.
-`index.html` rewrites every `<script type=text/babel>` to `?v=${Date.now()}`
-to bust the browser cache on reload. Do not remove this.
+**The live app is a Vite build, not Babel-standalone.** Real source is
+`webapp/frontend/src/` (React 18, custom navigation stack in `app.jsx`, no
+React Router). `webapp/frontend/vite.config.js` builds it to
+`webapp/static/dist/`, which is what FastAPI's `StaticFiles` mount actually
+serves at `/` — `index.html` there references hashed `/assets/index-*.js`
+bundles, regenerated (new hashes) on every build.
+
+`webapp/static/screens/*.jsx` + top-level `.jsx` files (the old
+Babel-standalone, no-build-step frontend, transpiled in-browser via
+`<script type=text/babel>`) are **legacy and no longer served** — confirmed
+2026-08-29 when a fix applied only there had no effect live. Don't edit them
+expecting changes to appear; edit `webapp/frontend/src/` instead.
+
+After editing anything under `webapp/frontend/src/`, you MUST rebuild and
+commit the output (`webapp/static/dist/` is checked into git, not
+regenerated at deploy time):
+```bash
+cd webapp/frontend && npm install   # first time only
+npm run build                        # regenerates webapp/static/dist/
+```
+Backend `.py` changes hot-reload via `uvicorn --reload` with no rebuild step.
 
 ### Card data shape (frontend)
 `api.normalizeCard` maps the backend row to:
@@ -155,7 +165,7 @@ to bust the browser cache on reload. Do not remove this.
 { id, name, set, code, lang, usd, change, image_url, condition,
   is_graded, grader, grade, purchase_price, tags[], ... }
 ```
-- `lang`: `"EN"` / `"JP"` (frontend) ↔ `"english"` / `"japanese"` (backend)
+- `lang`: `"EN"` / `"JP"` / `"CH"` (frontend) ↔ `"english"` / `"japanese"` / `"chinese"` (backend)
 - `grader`: maps from `grade_company`
 - `usd`: maps from `current_market_price`
 - `change`: maps from `gain_loss_pct`

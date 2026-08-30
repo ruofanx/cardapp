@@ -225,6 +225,19 @@ _JP_SET_PC_SLUG_MAP: dict[str, str] = {
     "team rocket":                  "team-rocket",
 }
 
+# Chinese set name → PriceCharting set slug (used directly; no further
+# slugification). Same idea as _JP_SET_PC_SLUG_MAP above, keyed on how the
+# set name is likely stored in the DB for Chinese-exclusive cards.
+_CH_SET_PC_SLUG_MAP: dict[str, str] = {
+    # Pokemon 151 Chinese-exclusive release (mainland-China-only, sold
+    # alongside the EN/JP "151" sets) — PC catalogues it as "151 Collect",
+    # not "chinese-151"/"chinese-scarlet-&-violet-151".
+    "chinese 151":               "151-collect",
+    "chinese151":                "151-collect",
+    "151 collect":               "151-collect",
+    "151":                       "151-collect",
+}
+
 # Japanese card name → English slug fragment used in PriceCharting URLs.
 # Maps base names only (suffixes like "ex", "GX", "VSTAR" are handled separately).
 _JP_CARD_NAME_EN_MAP: dict[str, str] = {
@@ -443,19 +456,27 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
     # --- Set slug ----------------------------------------------------------------
     raw_set = (set_name or "").strip()
 
-    # Check the override map first: covers JP-only sets whose PC slug can't be
+    # Check the override map first: covers non-EN sets whose PC slug can't be
     # derived from the stored name (e.g. ポケモンカード151 → scarlet-&-violet-151,
-    # "Pokemon Card 151" → same, "Pokemon Japanese Terastal Festival" → terastal-festival).
+    # "Pokemon Card 151" → same, "Pokemon Japanese Terastal Festival" → terastal-festival;
+    # Chinese "151" → 151-collect). Picked by language so e.g. a Chinese card's
+    # "151" doesn't accidentally match the JP map's "151" → scarlet-&-violet-151
+    # (a different, EN/JP-only console).
     # Strip common prefixes before lookup so "Pokemon Japanese Terastal Festival"
     # and "Terastal Festival" both hit the same key.
     _raw_lower = raw_set.lower()
-    # Strip "Pokemon Japanese " / "Pokemon " prefix for DB entries that include it
-    _raw_stripped = re.sub(r"^pokemon\s+japanese\s+", "", _raw_lower).strip()
+    # Strip "Pokemon Japanese "/"Pokemon Chinese "/"Pokemon " prefix for DB entries that include it
+    _raw_stripped = re.sub(r"^pokemon\s+(?:japanese|chinese)\s+", "", _raw_lower).strip()
     _raw_stripped = re.sub(r"^pokemon\s+", "", _raw_stripped).strip()
+    _set_slug_map = (
+        _CH_SET_PC_SLUG_MAP if language.lower() == "chinese"
+        else _JP_SET_PC_SLUG_MAP if language.lower() == "japanese"
+        else {}
+    )
     _forced_slug: Optional[str] = (
-        _JP_SET_PC_SLUG_MAP.get(_raw_lower)
-        or _JP_SET_PC_SLUG_MAP.get(_raw_stripped)
-        or _JP_SET_PC_SLUG_MAP.get(_raw_lower.replace("ポケモン", "").strip())
+        _set_slug_map.get(_raw_lower)
+        or _set_slug_map.get(_raw_stripped)
+        or _set_slug_map.get(_raw_lower.replace("ポケモン", "").strip())
     )
     if _forced_slug:
         base_slugs = [_forced_slug]
@@ -512,7 +533,7 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
     seen = set()
     set_variants = [s for s in set_variants if not (s in seen or seen.add(s))]
 
-    jp_prefix = "japanese-" if language.lower() == "japanese" else ""
+    lang_prefix = _language_prefix(language)
 
     # For old JP sets where PriceCharting uses the National Pokédex number as
     # the card identifier (instead of the printed set card number), generate an
@@ -538,13 +559,13 @@ def _candidate_urls(name: str, set_name: str, card_number: str,
             # accidentally match a different product at the card-number slot.
             if pokedex_num and pokedex_num != num and set_slug in _PC_POKEDEX_NUM_SETS:
                 if qual:
-                    urls.append(f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{qual}-{pokedex_num}")
+                    urls.append(f"{PC_BASE}/game/pokemon-{lang_prefix}{set_slug}/{name_slug}-{qual}-{pokedex_num}")
                 else:
-                    urls.append(f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{pokedex_num}")
+                    urls.append(f"{PC_BASE}/game/pokemon-{lang_prefix}{set_slug}/{name_slug}-{pokedex_num}")
             if qual:
-                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{qual}-{num}"
+                url = f"{PC_BASE}/game/pokemon-{lang_prefix}{set_slug}/{name_slug}-{qual}-{num}"
             else:
-                url = f"{PC_BASE}/game/pokemon-{jp_prefix}{set_slug}/{name_slug}-{num}"
+                url = f"{PC_BASE}/game/pokemon-{lang_prefix}{set_slug}/{name_slug}-{num}"
             urls.append(url)
     # Final dedupe preserving order
     out_seen = set()
@@ -575,7 +596,7 @@ def _sealed_product_urls(name: str, set_name: str, product_type: str,
     if product_slug is None:
         return []
 
-    jp_prefix = "japanese-" if language.lower() == "japanese" else ""
+    lang_prefix = _language_prefix(language)
     raw = (set_name or name or "").strip()
     candidates = [raw]
     stripped = _SET_PRINT_RUN_RE.sub("", raw).strip()
@@ -584,7 +605,7 @@ def _sealed_product_urls(name: str, set_name: str, product_type: str,
 
     seen = set()
     set_slugs = [_slug(c) for c in candidates if c and not (c in seen or seen.add(c))]
-    return [f"{PC_BASE}/game/pokemon-{jp_prefix}{s}/{product_slug}" for s in set_slugs]
+    return [f"{PC_BASE}/game/pokemon-{lang_prefix}{s}/{product_slug}" for s in set_slugs]
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +771,21 @@ def _detect_language(set_slug: str) -> str:
     if "japanese" in s:
         return "japanese"
     return "english"
+
+
+def _language_prefix(language: str) -> str:
+    """Inverse of `_detect_language` — the slug prefix PriceCharting uses when
+    *constructing* a console slug for a given language ('pokemon-<prefix><set>').
+    Was missing the "chinese-" case, so direct URL lookups for Chinese-exclusive
+    cards (e.g. Chinese 151 / CSV4C) built English-slug URLs, never found the
+    real product page, and fell through to name-only search/Browse fallbacks
+    that match the wrong (much cheaper) card."""
+    l = language.lower()
+    if l == "chinese":
+        return "chinese-"
+    if l == "japanese":
+        return "japanese-"
+    return ""
 
 
 def _parse_search_results(html_text: str, limit: int = 10) -> list[PriceChartingSearchResult]:
