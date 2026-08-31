@@ -14,6 +14,17 @@ def test_normalization_is_case_and_whitespace_insensitive():
     assert rarity_map.normalize_rarity("  rare ultra  ") == "ultra_rare"
 
 
+def test_normalizes_ultra_rare_and_prism_star():
+    # "Ultra Rare" (SM/SWSH-era Pokemon TCG API string) is distinct from the
+    # older "Rare Ultra" (EX-era) already covered above -- both are real,
+    # commonly-occurring API values, not near-duplicates of one another.
+    # Discovered missing via a production corpus fit that silently dropped
+    # dozens of cards with "pricing_model.rarity_map: unmapped rarity
+    # string 'Ultra Rare'" warnings.
+    assert rarity_map.normalize_rarity("Ultra Rare") == "ultra_rare"
+    assert rarity_map.normalize_rarity("Rare Prism Star") == "ultra_rare"
+
+
 def test_unmapped_rarity_returns_none():
     assert rarity_map.normalize_rarity("Some Future Rarity Nobody Has Seen") is None
     assert rarity_map.normalize_rarity(None) is None
