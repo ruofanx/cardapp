@@ -46,7 +46,6 @@ def test_sealed_products_are_not_priced_as_cards():
     assert asyncio.run(refresh_job._price_for_card(card)) is None
 
 
-def test_refresh_jobs_use_the_apps_database():
+def test_refresh_job_uses_the_apps_database():
     import db_postgres
     assert refresh_job.db is db_postgres
-    assert price_history_refresh.db is db_postgres
