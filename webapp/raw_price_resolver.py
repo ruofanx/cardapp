@@ -3,17 +3,19 @@ Shared raw-card "best available, sold-aware" price resolver.
 
 Pricing model (sold anchor + listing trend):
 
-  sold_base  = PriceCharting "Ungraded" (primary — aggregated eBay sold comps)
-             = TCGplayer market price (EN fallback — rolling 30-day sale median)
-  ask_median = eBay Browse API active-listing median (trend/direction signal)
+  sold_base  = mean of the sold-based signals available:
+               PriceCharting "Ungraded" (aggregated eBay sold comps) and
+               TCGplayer market price (EN only — recent-sale based)
+  ask_median = eBay Browse API active-listing median, NM-condition titles
+               only, discounted by BROWSE_HAIRCUT to approximate clearing price
 
-  trend      = (ask_median / sold_base) - 1
-  trend_adj  = clamp(trend, -TREND_CAP, +TREND_CAP)
+  trend      = (ask_median × (1 - BROWSE_HAIRCUT) / sold_base) - 1
+  trend_adj  = clamp(trend, -TREND_CAP, +TREND_CAP) × TREND_WEIGHT
   price      = sold_base × (1 + trend_adj)
 
-When active listings run above recent sold comps the market is rising;
-below means softening. TREND_CAP prevents a stale sold price or a thin
-Browse sample from swinging the result wildly.
+Asks sit above what cards actually sell for, so they are only a damped
+nudge on the sold anchor, never the price itself. TREND_CAP / TREND_WEIGHT
+keep a stale sold price or a thin Browse sample from swinging the result.
 
 If sold data is unavailable, Browse-only falls back to ask_median minus
 BROWSE_HAIRCUT (active listings typically clear ~12% below ask).
@@ -34,7 +36,8 @@ import pricecharting_lookup
 
 log = logging.getLogger(__name__)
 
-TREND_CAP = 0.15       # max ±15% trend adjustment from sold base
+TREND_CAP = 0.15       # max ±15% trend signal from sold base
+TREND_WEIGHT = 0.5     # fraction of the capped trend applied (asks ≠ sales)
 BROWSE_HAIRCUT = 0.12  # active listings typically run ~12% above clearing price
 
 
@@ -104,6 +107,7 @@ async def _get_browse_price(
     try:
         br = await ebay_browse_api.median_relevant_price(
             name, set_name, card_number, language=language, variant=variant,
+            nm_only=True,
         )
     except Exception as e:
         log.warning("eBay Browse median lookup failed: %s", e)
@@ -121,7 +125,7 @@ async def _get_browse_price(
             try:
                 br = await ebay_browse_api.median_relevant_price(
                     name, set_name=None, card_number=None,
-                    language="japanese", sample_size=20,
+                    language="japanese", sample_size=20, nm_only=True,
                 )
             except Exception as e:
                 log.warning("eBay Browse JP fallback failed: %s", e)
@@ -146,8 +150,9 @@ async def _get_browse_price(
 def _apply_trend(sold_base: float, sold_label: str, browse: dict) -> RawPriceResult:
     """Blend a sold-comp anchor with an active-listing trend signal."""
     ask = browse["price"]
-    trend = (ask / sold_base) - 1
-    trend_adj = max(-TREND_CAP, min(TREND_CAP, trend))
+    ask_clearing = ask * (1 - BROWSE_HAIRCUT)
+    trend = (ask_clearing / sold_base) - 1
+    trend_adj = max(-TREND_CAP, min(TREND_CAP, trend)) * TREND_WEIGHT
     market = sold_base * (1 + trend_adj)
     direction = (
         "rising" if trend_adj > 0.05
@@ -159,8 +164,9 @@ def _apply_trend(sold_base: float, sold_label: str, browse: dict) -> RawPriceRes
         baseline_label=f"{sold_label} + eBay trend ({direction})",
         extra_note=(
             f"Sold anchor ({sold_label}): ${sold_base:.2f}. "
-            f"Active listings ({browse['label']}): ${ask:.2f}. "
-            f"Trend: {trend:+.0%} → adj {trend_adj:+.0%} ({direction}). "
+            f"Active NM listings ({browse['label']}): ${ask:.2f} "
+            f"(≈${ask_clearing:.2f} after {BROWSE_HAIRCUT:.0%} ask-to-sale discount). "
+            f"Trend: {trend:+.0%} → adj {trend_adj:+.1%} ({direction}). "
             f"Market price: ${market:.2f}."
         ),
     )
@@ -187,14 +193,20 @@ async def resolve_raw_price(
     )
 
     # --- Sold base -----------------------------------------------------------
-    # PriceCharting is primary (real eBay sold comps, both EN and JP).
-    # TCGplayer market price is also sold-based (rolling 30-day sale median) —
-    # valid anchor for EN when PC has no catalogue entry for this card.
-    # Cardmarket EUR is listing-based, not sold — treated like Browse below.
-    if pc_price is not None:
+    # PriceCharting (real eBay sold comps, EN and JP) and TCGplayer market
+    # (recent-sale based, EN only) are both sold-based; when both exist they
+    # often differ by 10-20%, so average them rather than letting either one
+    # silently win. Cardmarket EUR is listing-based, not sold — treated like
+    # Browse below.
+    tcg_price = (catalog_price if catalog_price is not None
+                 and language.lower() == "english" else None)
+    if pc_price is not None and tcg_price is not None:
+        sold_base = (pc_price + tcg_price) / 2
+        sold_label = "PriceCharting + TCGplayer avg"
+    elif pc_price is not None:
         sold_base, sold_label = pc_price, "PriceCharting Ungraded"
-    elif catalog_price is not None and language.lower() == "english":
-        sold_base, sold_label = catalog_price, catalog_label
+    elif tcg_price is not None:
+        sold_base, sold_label = tcg_price, catalog_label
     else:
         sold_base, sold_label = None, None
 

@@ -56,63 +56,91 @@ def _no_catalog():
 # ---------------------------------------------------------------------------
 
 def test_pc_anchor_rising_trend(monkeypatch):
-    """PC $100 + Browse $115 → +15% trend (capped) → market $115."""
+    """PC $100 + Browse $140 → asks ≈$123 after discount → capped, damped +7.5%."""
     monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(100.0))
-    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _catalog(90.0))
-    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(115.0))
+    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _no_catalog())
+    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(140.0))
 
     result = asyncio.run(rpr.resolve_raw_price("Charizard", "Base Set", "4/102"))
 
-    assert result.nm_price == 115.0
+    assert result.nm_price == 107.5
     assert "PriceCharting Ungraded" in result.baseline_label
     assert "rising" in result.baseline_label
     assert "rising" in result.extra_note
 
 
 def test_pc_anchor_softening_trend(monkeypatch):
-    """PC $100 + Browse $80 → -15% trend (capped) → market $85."""
+    """PC $100 + Browse $70 → asks ≈$62 after discount → capped, damped -7.5%."""
     monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(100.0))
-    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _catalog(90.0))
-    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(80.0))
+    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _no_catalog())
+    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(70.0))
 
     result = asyncio.run(rpr.resolve_raw_price("Charizard", "Base Set", "4/102"))
 
-    assert result.nm_price == 85.0
+    assert result.nm_price == 92.5
     assert "softening" in result.baseline_label
 
 
 def test_pc_anchor_stable_market(monkeypatch):
-    """PC $100 + Browse $103 → +3% trend → market $103."""
+    """Asks that clear at the sold price leave the anchor untouched."""
     monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(100.0))
-    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _catalog(90.0))
-    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(103.0))
+    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _no_catalog())
+    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(113.64))
 
     result = asyncio.run(rpr.resolve_raw_price("Charizard", "Base Set", "4/102"))
 
-    assert result.nm_price == 103.0
+    assert result.nm_price == 100.0
     assert "stable" in result.baseline_label
 
 
+def test_asks_slightly_above_sold_do_not_inflate_price(monkeypatch):
+    """Regression: PC == TCGplayer == $92, asks $100 must not push FMV above sold."""
+    monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(92.0))
+    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _catalog(92.0))
+    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(100.0))
+
+    result = asyncio.run(rpr.resolve_raw_price("Venusaur ex", "151", "198"))
+
+    assert 89.0 <= result.nm_price <= 92.0
+
+
 def test_trend_cap_limits_upside(monkeypatch):
-    """PC $100 + Browse $200 → capped at +15% → market $115, not $200."""
+    """PC $100 + Browse $200 → capped, damped at +7.5% → $107.50, not $200."""
     monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(100.0))
     monkeypatch.setattr(rpr.card_lookup, "lookup_card", _no_catalog())
     monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(200.0))
 
     result = asyncio.run(rpr.resolve_raw_price("Pikachu", "Base Set", "58/102"))
 
-    assert result.nm_price == 115.0
+    assert result.nm_price == 107.5
 
 
 def test_trend_cap_limits_downside(monkeypatch):
-    """PC $100 + Browse $20 → capped at -15% → market $85, not $20."""
+    """PC $100 + Browse $20 → capped, damped at -7.5% → $92.50, not $20."""
     monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(100.0))
     monkeypatch.setattr(rpr.card_lookup, "lookup_card", _no_catalog())
     monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(20.0))
 
     result = asyncio.run(rpr.resolve_raw_price("Pikachu", "Base Set", "58/102"))
 
-    assert result.nm_price == 85.0
+    assert result.nm_price == 92.5
+
+
+def test_browse_signal_is_nm_only(monkeypatch):
+    """Raw pricing must ask Browse for NM-condition listings only."""
+    seen = {}
+
+    async def fake(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(10.0))
+    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _no_catalog())
+    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", fake)
+
+    asyncio.run(rpr.resolve_raw_price("Pikachu", "Base Set", "58/102"))
+
+    assert seen.get("nm_only") is True
 
 
 # ---------------------------------------------------------------------------
@@ -120,15 +148,27 @@ def test_trend_cap_limits_downside(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_tcgplayer_as_sold_base_when_no_pc(monkeypatch):
-    """No PC, TCGplayer $50, Browse $55 → +10% trend → market $55."""
+    """No PC, TCGplayer $50, Browse $55 → asks ≈$48.40 → -1.6% → $49.20."""
     monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _no_pc())
     monkeypatch.setattr(rpr.card_lookup, "lookup_card", _catalog(50.0))
     monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _browse(55.0))
 
     result = asyncio.run(rpr.resolve_raw_price("Pikachu", "Base Set", "58/102"))
 
-    assert result.nm_price == 55.0
+    assert result.nm_price == 49.2
     assert "TCGplayer" in result.baseline_label
+
+
+def test_pc_and_tcgplayer_are_averaged(monkeypatch):
+    """Both sold signals present → anchor is their mean, not PC alone."""
+    monkeypatch.setattr(rpr.pricecharting_lookup, "lookup_raw_price", _pc(100.0))
+    monkeypatch.setattr(rpr.card_lookup, "lookup_card", _catalog(120.0))
+    monkeypatch.setattr(rpr.ebay_browse_api, "median_relevant_price", _no_browse())
+
+    result = asyncio.run(rpr.resolve_raw_price("Vaporeon ex", "Prismatic Evolutions", "149"))
+
+    assert result.nm_price == 110.0
+    assert result.baseline_label == "PriceCharting + TCGplayer avg"
 
 
 def test_tcgplayer_alone_no_browse(monkeypatch):
