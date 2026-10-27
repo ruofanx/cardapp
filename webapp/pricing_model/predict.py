@@ -45,7 +45,7 @@ def _fundamentals_log_price(coefficients: dict[str, float], features: CardFeatur
     add("intercept")
     add(f"era:{features.era}")
     add(f"lang:{features.language}")
-    add("log_pull_scarcity", math.log(max(features.pull_scarcity, 1e-6)))
+    add(f"rarity:{features.canonical_rarity}")  # no-op for the baseline tier
     add(f"char:{features.character_tier}")
     if include_gem:
         add("log_inv_gem_rate", math.log(1.0 / max(features.gem_rate, 1e-6)))
