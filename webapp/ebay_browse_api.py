@@ -42,6 +42,7 @@ from pricing_engine import (
     PRODUCT_TYPE_SEARCH_TERMS,
     is_relevant_sealed_title,
     sealed_title_extra_word_count,
+    _COND_LP_RE, _COND_MP_RE, _COND_DMG_RE, _title_hp_is_condition,
 )
 
 log = logging.getLogger(__name__)
@@ -219,8 +220,12 @@ async def median_relevant_price(
     sample_size: int = 8,
     marketplace: str = DEFAULT_MARKETPLACE,
     sort: Optional[str] = None,
+    nm_only: bool = False,
 ) -> Optional[dict]:
     """Trim-median of active-listing prices for this card.
+
+    `nm_only` (raw cards): drop titles that advertise a lower condition
+    (LP/MP/HP/damaged) so the median is comparable to an NM baseline.
 
     Builds a strong query string from name + number + set + language hints,
     fetches `sample_size×2` listings, filters out titles that don't mention
@@ -303,6 +308,25 @@ async def median_relevant_price(
         ):
             continue
         if grade_company and grade_company.lower() not in t:
+            continue
+        if nm_only and not grade_company and (
+            _COND_LP_RE.search(it.title) or _COND_MP_RE.search(it.title)
+            or _COND_DMG_RE.search(it.title) or _title_hp_is_condition(it.title)
+        ):
+            continue
+        # An English card must not be priced off JP/KR/CN prints (different
+        # market, different SKU).
+        if language.lower() == "english" and re.search(
+            r'\b(japanese|jpn|korean|chinese|simplified|traditional)\b', t
+        ):
+            continue
+        # Non-1st-Edition / non-reverse variants shouldn't be priced off
+        # those (often 2-5x) premium or distinct printings.
+        if "1st" not in v_lower and "first" not in v_lower and re.search(
+            r'\b(1st|first)\s+edition\b', t
+        ):
+            continue
+        if "reverse" not in v_lower and re.search(r'\breverse\s+holo', t):
             continue
         # Holo-pattern filter: listings for Master Ball pattern must say so in
         # the title; without this, cheap base-version listings pollute the median.

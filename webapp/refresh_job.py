@@ -86,6 +86,7 @@ async def _price_for_card(card: db.Card) -> float | None:
             pc = await pricecharting_lookup.lookup_graded_price(
                 card.name, card.set_name or "", card.card_number or "",
                 card.language, card.grade_company, float(card.grade),
+                variant=card.variant,
             )
             if pc and pc.price_usd is not None:
                 return float(pc.price_usd)

@@ -43,7 +43,12 @@ CACHE_TTL_SECONDS = 24 * 3600  # 1 day
 # (PSA 10, CGC 10, BGS 10, SGC 10, plus rare BGS 10 Black / CGC 10 Pristine).
 # For sub-10 grades they expose a generic cross-service "Grade N" row;
 # we map all sub-10 grades to that, accepting some loss of precision.
+# The UI's 10.5 sentinel (BGS 10 Black Label / CGC 10 Pristine) has its own
+# PriceCharting row; SGC 10 Pristine has none, so it deliberately stays
+# unmapped and falls through to the multiplier estimate.
 GRADE_TO_PC_ROW = {
+    ("BGS", 10.5):  "BGS 10 Black",
+    ("CGC", 10.5):  "CGC 10 Pristine",
     ("PSA", 10):    "PSA 10",
     ("CGC", 10):    "CGC 10",
     ("BGS", 10):    "BGS 10",
@@ -52,6 +57,9 @@ GRADE_TO_PC_ROW = {
     ("PSA", 9):     "Grade 9",
     ("PSA", 8):     "Grade 8",
     ("PSA", 7):     "Grade 7",
+    ("PSA", 6):     "Grade 6",
+    ("PSA", 5):     "Grade 5",
+    ("CGC", 7):     "Grade 7",
     ("CGC", 9.5):   "Grade 9.5",
     ("CGC", 9):     "Grade 9",
     ("CGC", 8):     "Grade 8",
