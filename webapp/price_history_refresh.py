@@ -19,7 +19,10 @@ from datetime import datetime, timezone
 
 import logging
 
-import db
+try:
+    import db_postgres as db
+except Exception:
+    import db  # local SQLite fallback, same as app.py
 import pricecharting_lookup as pc
 
 log = logging.getLogger(__name__)
