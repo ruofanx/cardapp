@@ -10,18 +10,19 @@ from pricing_model.features import CardFeatures
 from pricing_model.predict import predict_raw_price
 
 
-def _synthetic_corpus(n: int = 80, seed: int = 7):
+def _synthetic_corpus(n: int = 90, seed: int = 7):
     """Cards with a KNOWN price-generating rule so the fit can be checked
-    against ground truth: rare_holo cards trade at 2x common's base price,
-    with a flat monthly history (no lifecycle/market effects) so the
-    regression should recover that ratio cleanly."""
+    against ground truth: rare_holo cards trade at 2x common's base price
+    and ultra_rare at 4x, with a flat monthly history (no lifecycle/market
+    effects) so the regression should recover those ratios cleanly. Three
+    tiers (not two) so the test can check the fitted rarity coefficients
+    come out in the right ORDER, not just the right sign."""
     random.seed(seed)
     cards = []
     history = {}
+    tiers = [("Common", 10.0), ("Rare Holo", 20.0), ("Rare Ultra", 40.0)]
     for i in range(n):
-        tier_is_rare = i % 2 == 0
-        rarity_raw = "Rare Holo" if tier_is_rare else "Common"
-        base_price = 20.0 if tier_is_rare else 10.0
+        rarity_raw, base_price = tiers[i % 3]
         card_key = f"synthetic-{i}"
         cards.append(CorpusCardRow(
             card_key=card_key, name=f"Card {i}", set_name="Synthetic Set",
@@ -29,7 +30,7 @@ def _synthetic_corpus(n: int = 80, seed: int = 7):
             release_date="2023-06-01", psa10_price_usd=None, grade9_price_usd=None,
         ))
         # Flat 6-month history at base_price with tiny noise — no lifecycle
-        # shape, no market drift, isolates the rarity coefficient.
+        # shape, no market drift, isolates the rarity coefficients.
         history[card_key] = [
             (f"2024-{m:02d}", base_price * (1 + random.uniform(-0.02, 0.02)))
             for m in range(1, 7)
@@ -45,12 +46,17 @@ def test_fit_model_recovers_known_rarity_ratio():
     assert run.r_squared_raw > 0.9  # near-noiseless synthetic data
     assert run.residual_std_raw < 0.2  # tight fit on near-noiseless data
 
-    # rare_holo cards have a SMALLER pull_scarcity value (scarcer) than
-    # common cards but a HIGHER price in this synthetic corpus, so the
-    # fitted log_pull_scarcity coefficient must be negative (smaller
-    # scarcity value -> higher predicted price) for the model to have
-    # actually learned the rarity signal rather than fitting noise.
-    assert run.coefficients_raw["log_pull_scarcity"] < 0
+    # "common" is the implicit baseline (no dummy -- same convention as
+    # char:S/A/B/D having no char:C). rare_holo (2x common) and ultra_rare
+    # (4x common) must each fit a POSITIVE coefficient (priced above
+    # baseline), and ultra_rare's must be LARGER than rare_holo's --
+    # confirms the model learned each tier's own effect instead of forcing
+    # all tiers onto one line (the old log_pull_scarcity design's failure
+    # mode: a single linear slope across all 8 tiers, which systematically
+    # underfit the scarce/expensive tail).
+    assert run.coefficients_raw["rarity:rare_holo"] > 0
+    assert run.coefficients_raw["rarity:ultra_rare"] > 0
+    assert run.coefficients_raw["rarity:ultra_rare"] > run.coefficients_raw["rarity:rare_holo"]
 
 
 def test_lifecycle_multiplier_falls_back_to_median_when_bin_missing():

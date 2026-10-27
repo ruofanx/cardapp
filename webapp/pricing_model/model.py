@@ -23,7 +23,7 @@ from datetime import date
 
 import numpy as np
 
-from pricing_model import character_tiers, gem_rate, pull_rates, rarity_map
+from pricing_model import character_tiers, gem_rate, rarity_map
 from pricing_model.db import CorpusCardRow, ModelRun
 
 RIDGE_ALPHA = 1.0
@@ -42,11 +42,22 @@ LIFECYCLE_BINS: list[tuple[float, float]] = [
     (0, 3), (3, 6), (6, 9), (9, 12), (12, 18), (18, 24), (24, 36), (36, 10_000),
 ]
 
+# Rarity enters as one dummy per tier (not a continuous pull-scarcity
+# feature) so the regression can fit each tier's own price effect freely.
+# "common" is the implicit baseline (no dummy), same convention as "char:C"
+# having no dummy below. A continuous log_pull_scarcity feature was tried
+# first but dropped: with FIXED_CARDS_IN_TIER pinned to 1 everywhere,
+# pull_rate_scarcity(era, tier, ...) is already a deterministic function of
+# (era, tier) alone -- i.e. just a hand-picked numeric stand-in for tier,
+# forcing one linear relationship across all 8 tiers. That systematically
+# underfit the scarce/expensive tail (confirmed in production: an Ultra
+# Rare predicted ~$10 against an actual ~$200-270 market price).
 FEATURE_ORDER_RAW: list[str] = [
     "intercept",
     "era:ecard_ex", "era:dp_pt", "era:bw_xy", "era:sm", "era:swsh", "era:sv",
     "lang:japanese", "lang:chinese",
-    "log_pull_scarcity",
+    "rarity:uncommon", "rarity:rare", "rarity:rare_holo", "rarity:ultra_rare",
+    "rarity:illustration_rare", "rarity:special_illustration_rare", "rarity:gold_secret",
     "char:S", "char:A", "char:B", "char:D",
 ]
 FEATURE_ORDER_PSA10: list[str] = FEATURE_ORDER_RAW + ["log_inv_gem_rate"]
@@ -216,7 +227,7 @@ def lifecycle_multiplier(curve: dict[str, float], months_since_release: float) -
     return values[len(values) // 2]
 
 
-def _feature_row(order: list[str], card: CorpusCardRow, pull_scarcity: float,
+def _feature_row(order: list[str], card: CorpusCardRow, tier: str,
                   char_tier: str, log_inv_gem_rate: float | None = None) -> list[float]:
     row = [0.0] * len(order)
 
@@ -227,7 +238,7 @@ def _feature_row(order: list[str], card: CorpusCardRow, pull_scarcity: float,
     set_if_present("intercept")
     set_if_present(f"era:{card.era}")
     set_if_present(f"lang:{card.language}")
-    set_if_present("log_pull_scarcity", math.log(max(pull_scarcity, 1e-6)))
+    set_if_present(f"rarity:{tier}")  # no-ops for the baseline tier (no dummy column)
     set_if_present(f"char:{char_tier}")
     if log_inv_gem_rate is not None:
         set_if_present("log_inv_gem_rate", log_inv_gem_rate)
@@ -280,16 +291,15 @@ def fit_model(cards: list[CorpusCardRow], history: dict[str, list[tuple[str, flo
         months_since = _months_between(release, _month_to_date(latest_month))
         mult = lifecycle_multiplier(curve, months_since) or 1.0
         char_tier = character_tiers.get_character_tier(card.name)
-        scarcity = pull_rates.pull_rate_scarcity(card.era, tier, card.set_name, cards_in_tier=FIXED_CARDS_IN_TIER)
 
         target = math.log(latest_price / (idx * mult))
-        X_raw.append(_feature_row(FEATURE_ORDER_RAW, card, scarcity, char_tier))
+        X_raw.append(_feature_row(FEATURE_ORDER_RAW, card, tier, char_tier))
         y_raw.append(target)
 
         if card.psa10_price_usd and card.psa10_price_usd > 0:
             gem = gem_rate.estimate_gem_rate(card.era, tier, "standard")
             X_psa.append(_feature_row(
-                FEATURE_ORDER_PSA10, card, scarcity, char_tier,
+                FEATURE_ORDER_PSA10, card, tier, char_tier,
                 log_inv_gem_rate=math.log(1.0 / gem),
             ))
             y_psa.append(math.log(card.psa10_price_usd / (idx * mult)))

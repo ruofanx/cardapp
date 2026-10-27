@@ -13,13 +13,13 @@ def _sample_run() -> ModelRun:
         id=1, fitted_at="2026-08-01T00:00:00",
         coefficients_raw={
             "intercept": math.log(10.0), "era:sv": 0.1, "lang:japanese": -0.2,
-            "lang:chinese": -0.5, "log_pull_scarcity": 0.3,
+            "lang:chinese": -0.5, "rarity:special_illustration_rare": 0.3,
             "char:S": math.log(8.0), "char:A": math.log(3.0),
             "char:B": math.log(1.5), "char:D": math.log(0.6),
         },
         coefficients_psa10={
             "intercept": math.log(40.0), "era:sv": 0.1, "lang:japanese": -0.2,
-            "lang:chinese": -0.5, "log_pull_scarcity": 0.3,
+            "lang:chinese": -0.5, "rarity:special_illustration_rare": 0.3,
             "char:S": math.log(8.0), "char:A": math.log(3.0),
             "char:B": math.log(1.5), "char:D": math.log(0.6),
             "log_inv_gem_rate": 0.4,
@@ -48,6 +48,11 @@ def test_predict_raw_price_is_positive_and_has_breakdown():
     assert pred.low < pred.point_estimate < pred.high
     assert "char:S" in pred.breakdown
     assert pred.breakdown["char:S"] == math.exp(math.log(8.0))
+    # Rarity tier must contribute its own named factor to the breakdown
+    # (replaces the old log_pull_scarcity-only signal) keyed by the
+    # feature's canonical_rarity, not a generic/omitted key.
+    assert "rarity:special_illustration_rare" in pred.breakdown
+    assert pred.breakdown["rarity:special_illustration_rare"] == math.exp(0.3)
 
 
 def test_predict_raw_price_widens_band_for_chinese_language():
