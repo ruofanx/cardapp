@@ -38,3 +38,14 @@ def test_daily_price_refresh_job_still_registered():
             refresh_job.shutdown_scheduler()
 
     asyncio.run(_check())
+
+
+def test_sealed_products_are_not_priced_as_cards():
+    from types import SimpleNamespace
+    card = SimpleNamespace(product_type="booster_pack", name="Fossil Unlimited")
+    assert asyncio.run(refresh_job._price_for_card(card)) is None
+
+
+def test_refresh_job_uses_the_apps_database():
+    import db_postgres
+    assert refresh_job.db is db_postgres

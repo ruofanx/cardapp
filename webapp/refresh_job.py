@@ -24,7 +24,10 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-import db
+try:
+    import db_postgres as db
+except Exception:
+    import db  # local SQLite fallback, same as app.py
 import pricecharting_lookup
 import raw_price_resolver
 import price_history_refresh
@@ -81,6 +84,11 @@ async def refresh_all_cards() -> dict:
 
 async def _price_for_card(card: db.Card) -> float | None:
     """Same routing as /api/refresh-price, simplified for batch use."""
+    # Sealed products (ETB, booster pack/box, ...) have their own pricing path
+    # in app._refresh_sealed_price; pricing them as single cards yields junk.
+    if getattr(card, "product_type", "card") != "card":
+        return None
+
     # Graded → PriceCharting first
     if card.is_graded and card.grade_company and card.grade is not None:
         try:
