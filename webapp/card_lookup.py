@@ -760,7 +760,7 @@ async def search_cards(query: str, limit: int = 20,
               "orderBy": "-set.releaseDate"}
 
     async with httpx.AsyncClient(timeout=15.0, headers=_headers()) as client:
-        async def fetch(query_str: str, *, retries: int = 1) -> list[dict]:
+        async def fetch(query_str: str, *, retries: int = 3) -> list[dict]:
             """Hit the TCG API with one retry on transient network errors.
 
             Distinguishes between "no data" (200 OK, empty results — the
