@@ -303,3 +303,17 @@ Models: `claude-sonnet-4-5` / `gemini-2.5-flash`.
 ## Users
 
 Ro + Reid + Ryan (pre-seeded). PWA installed on iPhone via Add-to-Home-Screen.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues (ruofanx/cardapp) via `gh`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
