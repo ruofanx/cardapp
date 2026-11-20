@@ -16,6 +16,7 @@ Static frontend served from ./static/index.html at /.
 """
 from __future__ import annotations
 
+import asyncio
 import csv
 import dataclasses
 import io
@@ -718,24 +719,49 @@ async def _resolve_rarity_and_release_date(card: "db.Card") -> tuple[Optional[st
     return rarity, release_date
 
 
+_SET_RELEASE_CACHE: dict[str, str] = {}
+
+
+async def _get_json_with_retry(url: str, params: Optional[dict] = None,
+                               attempts: int = 3) -> Optional[dict]:
+    """GET a JSON body, retrying transient failures (timeouts, 5xx).
+
+    api.pokemontcg.io intermittently answers 500/502 or times out; a single
+    failed attempt used to make the whole fair-value prediction 422 and hide
+    the panel. Returns None once every attempt has failed.
+    """
+    import httpx
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for attempt in range(attempts):
+            try:
+                resp = await client.get(url, params=params)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPError:
+                if attempt < attempts - 1:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+    return None
+
+
 async def _resolve_set_release_date(set_name: str) -> Optional[str]:
     """EN sets: query Pokemon TCG API's /v2/sets by name. Returns
     'YYYY-MM-DD' or None if the set can't be resolved (an unrecognized EN
-    set name — the caller returns 422 rather than guessing)."""
-    import httpx
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            resp = await client.get(
-                "https://api.pokemontcg.io/v2/sets",
-                params={"q": f'name:"{set_name}"'},
-            )
-            resp.raise_for_status()
-        except httpx.HTTPError:
-            return None
-    data = resp.json().get("data") or []
+    set name — the caller returns 422 rather than guessing). Successful
+    lookups are cached for the life of the process (release dates never
+    change)."""
+    key = (set_name or "").strip().lower()
+    if key in _SET_RELEASE_CACHE:
+        return _SET_RELEASE_CACHE[key]
+    body = await _get_json_with_retry(
+        "https://api.pokemontcg.io/v2/sets", {"q": f'name:"{set_name}"'},
+    )
+    data = (body or {}).get("data") or []
     if not data:
         return None
-    return data[0].get("releaseDate", "").replace("/", "-") or None
+    release = data[0].get("releaseDate", "").replace("/", "-") or None
+    if release:
+        _SET_RELEASE_CACHE[key] = release
+    return release
 
 
 async def _resolve_jp_set_release_date(set_name: str) -> Optional[str]:
@@ -763,15 +789,8 @@ async def _resolve_jp_set_release_date(set_name: str) -> Optional[str]:
     set_id = tcgdex_lookup._resolve_set_id(set_name)
     if not set_id:
         return None
-    import httpx
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            resp = await client.get(f"{tcgdex_lookup.TCGDEX_BASE}/sets/{set_id}")
-            resp.raise_for_status()
-        except httpx.HTTPError:
-            return None
-    release = resp.json().get("releaseDate")
-    return release or None
+    body = await _get_json_with_retry(f"{tcgdex_lookup.TCGDEX_BASE}/sets/{set_id}")
+    return (body or {}).get("releaseDate") or None
 
 
 @app.get("/api/cards/{card_id}/prediction")
