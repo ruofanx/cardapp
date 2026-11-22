@@ -182,6 +182,22 @@ def _to_result(card: dict) -> JpCardResult:
     )
 
 
+def pick_name_search_hit(items: list[dict]) -> dict:
+    """Choose one TCGdex name-search row. SV sets beat older sets; within a
+    group the highest id (most recent lexical set id) wins."""
+    def rank(card: dict) -> tuple:
+        cid = card.get("id") or ""
+        modern = 0 if cid.upper().startswith("SV") else 1
+        return (modern, cid)
+
+    ordered = sorted(items, key=rank)
+    # Among the best group (modern==0 if any SV exists), take the highest id.
+    best_group = rank(ordered[0])[0]
+    group = [c for c in ordered if rank(c)[0] == best_group]
+    group.sort(key=lambda c: c.get("id") or "", reverse=True)
+    return group[0]
+
+
 async def lookup_jp_card(name: str, set_name: Optional[str] = None,
                           card_number: Optional[str] = None) -> Optional[JpCardResult]:
     """Best-effort lookup against TCGdex for a Japanese card.
@@ -211,14 +227,12 @@ async def lookup_jp_card(name: str, set_name: Optional[str] = None,
             if r.status_code == 200:
                 items = r.json()
                 if isinstance(items, list) and items:
-                    # Without a set ID hint, pick the most recent (highest set ID lexically
-                    # among SV-prefixed sets, then anything else).
-                    items.sort(key=lambda c: (
-                        0 if (c.get("id", "").upper().startswith("SV")) else 1,
-                        c.get("id", ""),
-                    ), reverse=True)
+                    # Prefer a modern SV card, and among those the highest set id.
+                    # reverse=True on (0 if SV else 1, id) put the oldest non-SV
+                    # card first, so a name search cached the wrong rarity.
+                    picked = pick_name_search_hit(items)
                     # Fetch detail for the top candidate (search results are summary-only)
-                    detail_r = await client.get(f"{TCGDEX_BASE}/cards/{items[0]['id']}")
+                    detail_r = await client.get(f"{TCGDEX_BASE}/cards/{picked['id']}")
                     if detail_r.status_code == 200:
                         return _to_result(detail_r.json())
         except httpx.HTTPError as e:

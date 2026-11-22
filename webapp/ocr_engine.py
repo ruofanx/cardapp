@@ -255,7 +255,7 @@ Schema:
   "name": "Pokemon name as printed (include trainer prefix like Sabrina's Alakazam or Team Rocket's Moltres)",
   "set_name": "set/expansion name in full English",
   "card_number": "printed number with denominator (137/086) or just the number",
-  "language": "english | japanese",
+  "language": "english | japanese | chinese",
   "variant": "Holo | Reverse Holo | Full Art | Illustration Rare | Special Art Rare | Special Illustration Rare | Hyper Rare | Alt Art | Rainbow Rare | Gold Secret Rare | 1st Edition | Promo | null",
   "confidence": 0..1
 }
@@ -266,9 +266,12 @@ Rules:
   Pokemon ("Team Rocket's Moltres ex", "Sabrina's Alakazam", "N's Zekrom").
 
 LANGUAGE DETECTION:
-- "japanese" if the card text uses kana (ひらがな/カタカナ) or kanji (漢字).
+- "japanese" if the card text uses kana (ひらがな or カタカナ). Kanji alone is
+  not enough — simplified Chinese cards also use hanzi and have no kana.
   Vintage JP Gym/Neo/Base cards have names like "ナツメのフーディン" (Sabrina's
   Alakazam JP). The "Pokémon" trademark line at the bottom is also Japanese.
+- "chinese" if the card uses hanzi without kana (simplified or traditional
+  Chinese). Do not label those "japanese".
 - "english" if the card text is all in Latin letters with English game text.
 - When the card name is Japanese, ALWAYS translate it to its standard English
   name in the `name` field (e.g. "ナツメのフーディン" → "Sabrina's Alakazam").
@@ -519,7 +522,7 @@ def _build_identity_from_json(raw: str):
     # actually carry the stamp — most often on Japanese cards (which
     # never used the 1st Edition designation at all). Server-side
     # enforcement so a bad LLM output doesn't pollute downstream pricing.
-    if variant and language == "japanese":
+    if variant and language in ("japanese", "chinese"):
         v = variant.strip().lower()
         if v in ("1st edition", "first edition", "1st ed", "edition 1"):
             log.info("Dropping LLM variant=%r on JP card — Japanese sets "
@@ -644,7 +647,7 @@ def _correct_identity(identity: "CardIdentity") -> "CardIdentity":
         return identity
     variant = identity.variant
     language = (identity.language or "").strip().lower()
-    if variant and language == "japanese":
+    if variant and language in ("japanese", "chinese"):
         v = variant.strip().lower()
         if v in ("1st edition", "first edition", "1st ed", "edition 1"):
             log.info("Cache-read correction: dropping variant=%r on JP %r "

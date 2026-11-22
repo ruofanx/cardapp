@@ -30,7 +30,7 @@ export default function InsightsScreen({ goBack, collection = [], tweaks }) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, padding: '16px 16px 0' }}>
           <StatTile label="Cards" value={cards.length} />
           <StatTile label="Total value" value={fmtPrice(stats.totalValue, cur === 'BOTH' ? 'USD' : cur, { decimals: 0 })} />
-          <GainLossTile paid={stats.totalPaid} value={stats.totalValue} hasData={stats.paidCount > 0} cur={cur} />
+          <GainLossTile paid={stats.totalPaid} value={stats.costedValue} hasData={stats.paidCount > 0} cur={cur} />
         </div>
 
         {/* Value by set */}
@@ -57,7 +57,7 @@ export default function InsightsScreen({ goBack, collection = [], tweaks }) {
         {stats.hasJP && (
           <Section title="Language">
             <div style={{ padding: '0 16px' }}>
-              <LangBar en={stats.enCount} jp={stats.jpCount} enVal={stats.enValue} jpVal={stats.jpValue} cur={cur} />
+              <LangBar en={stats.enCount} jp={stats.jpCount} ch={stats.chCount} enVal={stats.enValue} jpVal={stats.jpValue} chVal={stats.chValue} cur={cur} />
             </div>
           </Section>
         )}
@@ -184,9 +184,12 @@ function tagNames(card) {
 function compute(cards) {
   const totalValue = cards.reduce((s, c) => s + (c.usd || 0), 0)
 
-  const withPaid = cards.filter(c => c.purchase_price != null)
-  const totalPaid = withPaid.reduce((s, c) => s + c.purchase_price, 0)
-  const paidCount = withPaid.length
+  // Gain/loss only on cards that have both a cost and a market price.
+  // Mixing uncosted market value into the numerator treats those cards as pure profit.
+  const costed = cards.filter(c => c.purchase_price != null && c.usd != null)
+  const totalPaid = costed.reduce((s, c) => s + c.purchase_price, 0)
+  const costedValue = costed.reduce((s, c) => s + (c.usd || 0), 0)
+  const paidCount = costed.length
 
   // Sets
   const setMap = {}
@@ -212,9 +215,11 @@ function compute(cards) {
   // Language
   const enCards = cards.filter(c => (c.lang || 'EN').toUpperCase() === 'EN')
   const jpCards = cards.filter(c => (c.lang || '').toUpperCase() === 'JP')
-  const hasJP = jpCards.length > 0
+  const chCards = cards.filter(c => (c.lang || '').toUpperCase() === 'CH')
+  const hasJP = jpCards.length > 0 || chCards.length > 0
   const enValue = enCards.reduce((s, c) => s + (c.usd || 0), 0)
   const jpValue = jpCards.reduce((s, c) => s + (c.usd || 0), 0)
+  const chValue = chCards.reduce((s, c) => s + (c.usd || 0), 0)
 
   // Raw vs Graded
   const rawCards = cards.filter(c => !c.is_graded)
@@ -256,10 +261,11 @@ function compute(cards) {
   const monthBuckets = Object.entries(monthMap).sort((a, b) => b[0].localeCompare(a[0])).map(([, v]) => v).slice(0, 12)
 
   return {
-    totalValue, totalPaid, paidCount,
+    totalValue, totalPaid, costedValue, paidCount,
     sets,
     conditions,
-    hasJP, enCount: enCards.length, jpCount: jpCards.length, enValue, jpValue,
+    hasJP, enCount: enCards.length, jpCount: jpCards.length, chCount: chCards.length,
+    enValue, jpValue, chValue,
     graderBreakdown,
     rawCount: rawCards.length, gradedCount: gradedCards.length, rawValue, gradedValue,
     top5, topGainers, topLosers,
@@ -339,19 +345,22 @@ function CondChip({ cond, count, pct }) {
   )
 }
 
-function LangBar({ en, jp, enVal, jpVal, cur }) {
-  const total = en + jp || 1
+function LangBar({ en, jp, ch = 0, enVal, jpVal, chVal = 0, cur }) {
+  const total = en + jp + ch || 1
   const enPct = en / total * 100
   const jpPct = jp / total * 100
+  const chPct = ch / total * 100
   return (
     <div>
       <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', marginBottom: 8 }}>
-        <div style={{ width: `${enPct}%`, background: 'var(--accent)', transition: 'width 0.4s ease' }} />
-        <div style={{ flex: 1, background: '#e54444' }} />
+        <div style={{ width: `${enPct}%`, background: 'var(--accent)' }} />
+        <div style={{ width: `${jpPct}%`, background: '#e54444' }} />
+        <div style={{ width: `${chPct}%`, background: '#f5c518' }} />
       </div>
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <LangStat color="var(--accent)" label="English" count={en} value={enVal} cur={cur} />
         {jp > 0 && <LangStat color="#e54444" label="Japanese" count={jp} value={jpVal} cur={cur} />}
+        {ch > 0 && <LangStat color="#f5c518" label="Chinese" count={ch} value={chVal} cur={cur} />}
       </div>
     </div>
   )

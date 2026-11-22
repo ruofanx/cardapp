@@ -775,7 +775,7 @@ def get_public_profile(profile_id: int) -> dict | None:
                 "name": r["name"],
                 "set": r["set_name"],
                 "code": r["card_number"],
-                "lang": "JP" if r.get("language") == "japanese" else "EN",
+                "lang": {"japanese": "JP", "chinese": "CH"}.get(r.get("language"), "EN"),
                 "usd": float(r["current_market_price"]) if r["current_market_price"] else None,
                 "image_url": r.get("image_url"),
             }
