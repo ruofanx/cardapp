@@ -719,6 +719,10 @@ export const api = {
     return request(P.cardPhoto(cardId), { method: 'POST', body: fd })
   },
 
+  async deleteCardPhoto(cardId) {
+    return request(P.cardPhoto(cardId), { method: 'DELETE' })
+  },
+
   photoUrl(card) {
     if (!card) return null
     if (card.image_url && /^https?:\/\//.test(card.image_url)) return card.image_url

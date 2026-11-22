@@ -395,6 +395,24 @@ def test_identify_user_prompt_reflects_hint():
 
 from fastapi.testclient import TestClient
 import app as app_module
+
+def _authed_client(monkeypatch):
+    """Identify requires a logged-in account and writes a scan-usage row."""
+    from auth import get_current_account
+    app_module.app.dependency_overrides[get_current_account] = lambda: {
+        "id": "test-account", "email": "t@example.com", "plan": "pro", "trial_ends_at": None,
+    }
+    monkeypatch.setattr(app_module.db, "get_scan_count", lambda *a, **k: 0)
+    monkeypatch.setattr(app_module.db, "increment_scan_count", lambda *a, **k: 1)
+    return TestClient(app_module.app)
+
+
+@pytest.fixture(autouse=True)
+def _clear_dependency_overrides():
+    yield
+    app_module.app.dependency_overrides.clear()
+
+
 import ocr_engine as ocr_engine_module
 from ocr_engine import IdentifyResult
 from pricing_engine import CardIdentity
@@ -423,7 +441,7 @@ def test_identify_photo_sealed_product_skips_card_lookups(monkeypatch):
         return {"estimated_price": 54.99, "source": "ebay_sealed", "image_url": None}
     monkeypatch.setattr(app_module, "_refresh_sealed_price", fake_sealed_price)
 
-    client = TestClient(app_module.app)
+    client = _authed_client(monkeypatch)
     res = client.post("/api/identify", files={"photo": ("box.jpg", b"fake", "image/jpeg")})
     assert res.status_code == 200
     data = res.json()
@@ -459,7 +477,7 @@ def test_identify_photo_card_hint_forces_card_routing(monkeypatch):
         raise AssertionError("sealed price lookup should not run when hint forces 'card'")
     monkeypatch.setattr(app_module, "_refresh_sealed_price", fail_sealed_price)
 
-    client = TestClient(app_module.app)
+    client = _authed_client(monkeypatch)
     res = client.post("/api/identify", files={"photo": ("card.jpg", b"fake", "image/jpeg")},
                        data={"product_type_hint": "card"})
     assert res.status_code == 200
@@ -502,7 +520,7 @@ def test_identify_photo_number_mismatch_skips_broad_image(monkeypatch):
         return []
     monkeypatch.setattr(ebay_browse_api, "search_items", fake_search_items)
 
-    client = TestClient(app_module.app)
+    client = _authed_client(monkeypatch)
     res = client.post("/api/identify", files={"photo": ("card.jpg", b"fake", "image/jpeg")})
     assert res.status_code == 200
     data = res.json()
@@ -832,7 +850,7 @@ def test_identify_photo_sealed_product_includes_image(monkeypatch):
         }
     monkeypatch.setattr(app_module, "_refresh_sealed_price", fake_sealed_price)
 
-    client = TestClient(app_module.app)
+    client = _authed_client(monkeypatch)
     res = client.post("/api/identify", files={"photo": ("box.jpg", b"fake", "image/jpeg")})
     assert res.status_code == 200
     data = res.json()
@@ -881,7 +899,7 @@ def test_identify_text_sealed_returns_candidate_with_image(monkeypatch):
         }
     monkeypatch.setattr(app_module, "_refresh_sealed_price", fake_sealed_price)
 
-    client = TestClient(app_module.app)
+    client = _authed_client(monkeypatch)
     res = client.post("/api/identify", json={"query": "chaos rising etb", "product_type_hint": "sealed"})
     assert res.status_code == 200
     data = res.json()
@@ -903,7 +921,7 @@ def test_identify_text_card_hint_still_uses_card_search(monkeypatch):
         return []
     monkeypatch.setattr(app_module.card_lookup, "search_cards", fake_search_cards)
 
-    client = TestClient(app_module.app)
+    client = _authed_client(monkeypatch)
     res = client.post("/api/identify", json={"query": "Charizard", "product_type_hint": "card"})
     assert res.status_code == 200
     assert called["query"] == "Charizard"

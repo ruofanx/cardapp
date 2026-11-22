@@ -72,7 +72,9 @@ async def _fetch_ebay_html(url: str) -> Optional[str]:
         async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
             r = await client.get(fetch_url, follow_redirects=True)
     except httpx.HTTPError as e:
-        log.warning("eBay fetch failed: %s", e)
+        # Do not log `e` itself: httpx includes the request URL, and when
+        # ScraperAPI is configured that URL contains the API key.
+        log.warning("eBay fetch failed: %s", type(e).__name__)
         return None
 
     if r.status_code != 200:

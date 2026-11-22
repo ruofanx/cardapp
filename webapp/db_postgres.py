@@ -575,42 +575,31 @@ def portfolio_summary(user_id: int) -> PortfolioSummary:
 # Accounts & scan usage
 # ---------------------------------------------------------------------------
 
-def _fallback_account(uid: str, email: str = "") -> dict:
-    return {"id": uid, "email": email, "plan": "free", "trial_ends_at": None}
-
 def get_account(uid: str) -> dict | None:
-    try:
-        with connect() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT id, email, plan, trial_ends_at FROM accounts WHERE id = %s", (uid,)
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
-    except Exception as e:
-        _log.warning("get_account failed (%s), returning fallback", type(e).__name__)
-        return _fallback_account(uid)
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, email, plan, trial_ends_at FROM accounts WHERE id = %s", (uid,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
 
 
 def create_account(uid: str, email: str) -> dict:
     from datetime import datetime, timezone, timedelta
     trial_ends = datetime.now(timezone.utc) + timedelta(days=14)
-    try:
-        with connect() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO accounts (id, email, plan, trial_ends_at) VALUES (%s, %s, 'free', %s) "
-                "ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email "
-                "RETURNING id, email, plan, trial_ends_at",
-                (uid, email, trial_ends),
-            )
-            row = cur.fetchone()
-            return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
-    except Exception as e:
-        _log.warning("create_account failed (%s), returning fallback", type(e).__name__)
-        return _fallback_account(uid, email)
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO accounts (id, email, plan, trial_ends_at) VALUES (%s, %s, 'free', %s) "
+            "ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email "
+            "RETURNING id, email, plan, trial_ends_at",
+            (uid, email, trial_ends),
+        )
+        row = cur.fetchone()
+        return {"id": str(row["id"]), "email": row["email"], "plan": row["plan"], "trial_ends_at": row["trial_ends_at"]}
 
 
 def update_account_plan(uid: str, *, plan: str, trial_ends_at) -> dict | None:
@@ -647,19 +636,48 @@ def _row_to_profile(row) -> dict:
 def list_profiles(account_id: str) -> list[dict]:
     with connect() as conn:
         cur = conn.cursor()
-        # Claim any legacy profiles that were seeded without an account_id.
-        # Safe for a single-account family app; runs as a no-op once all
-        # profiles are claimed.
-        cur.execute(
-            "UPDATE users SET account_id = %s WHERE account_id IS NULL",
-            (account_id,),
-        )
-        conn.commit()
         cur.execute(
             "SELECT id, name, account_id, avatar_color, trade_mode FROM users WHERE account_id = %s ORDER BY id",
             (account_id,),
         )
         return [_row_to_profile(r) for r in cur.fetchall()]
+
+
+def profile_ids_for_account(account_id: str) -> list[int]:
+    """Profile ids owned by this account. Does not claim unowned rows."""
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM users WHERE account_id = %s", (account_id,))
+        return [int(r["id"]) for r in cur.fetchall()]
+
+
+def claim_unowned_profiles(account_id: str, *, dry_run: bool = False) -> list[dict]:
+    """Attach users rows with NULL account_id to account_id.
+
+    One-time migration (see claim_legacy_profiles.py). Not called from
+    request handlers. The accounts row must already exist — sign in once
+    (or create it) before running this, so a typo'd id cannot orphan the
+    collection onto an account that will never log in.
+    """
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM accounts WHERE id = %s", (account_id,))
+        if cur.fetchone() is None:
+            raise ValueError(
+                f"no accounts row for {account_id!r}. Sign in once so the "
+                "account exists, then rerun."
+            )
+        if dry_run:
+            cur.execute(
+                "SELECT id, name FROM users WHERE account_id IS NULL ORDER BY id"
+            )
+        else:
+            cur.execute(
+                "UPDATE users SET account_id = %s WHERE account_id IS NULL "
+                "RETURNING id, name",
+                (account_id,),
+            )
+        return [{"id": int(r["id"]), "name": r["name"]} for r in cur.fetchall()]
 
 
 def get_profile(account_id: str, profile_id: int) -> dict | None:
@@ -775,29 +793,27 @@ def get_triggered_alerts(user_id: int) -> list[dict]:
 
 
 def get_scan_count(account_id: str, month: str) -> int:
-    try:
-        with connect() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT scan_count FROM scan_usage WHERE account_id = %s AND month = %s",
-                (account_id, month),
-            )
-            row = cur.fetchone()
-            return row[0] if row else 0
-    except Exception:
-        return 0
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT scan_count FROM scan_usage WHERE account_id = %s AND month = %s",
+            (account_id, month),
+        )
+        row = cur.fetchone()
+        if not row:
+            return 0
+        # RealDictCursor rows are dicts. row[0] raises KeyError, which the
+        # old except swallowed and reported as 0 — the free-tier cap never fired.
+        return int(row["scan_count"])
 
 
 def increment_scan_count(account_id: str, month: str) -> int:
-    try:
-        with connect() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                "INSERT INTO scan_usage (account_id, month, scan_count) VALUES (%s, %s, 1) "
-                "ON CONFLICT (account_id, month) DO UPDATE SET scan_count = scan_usage.scan_count + 1 "
-                "RETURNING scan_count",
-                (account_id, month),
-            )
-            return cur.fetchone()["scan_count"]
-    except Exception:
-        return 0
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO scan_usage (account_id, month, scan_count) VALUES (%s, %s, 1) "
+            "ON CONFLICT (account_id, month) DO UPDATE SET scan_count = scan_usage.scan_count + 1 "
+            "RETURNING scan_count",
+            (account_id, month),
+        )
+        return int(cur.fetchone()["scan_count"])

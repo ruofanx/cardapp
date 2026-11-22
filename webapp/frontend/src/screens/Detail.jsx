@@ -187,7 +187,12 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
   const live = (collection || []).find(x => x.id === params.card?.id);
   const c = live || params.card || (CARDS && CARDS[0]) || {};
   const _base = api?.state?.base || 'http://localhost:8000';
-  const serverPhotoUrl = c.photo_path ? `${_base}${c.photo_path}` : null;
+  const [photoOverride, setPhotoOverride] = useState(undefined);
+  React.useEffect(() => { setPhotoOverride(undefined); }, [c?.id]);
+  const photoPath = photoOverride !== undefined ? photoOverride : c.photo_path;
+  const serverPhotoUrl = photoPath
+    ? (String(photoPath).startsWith('http') ? photoPath : `${_base}${photoPath.startsWith('/') ? '' : '/'}${photoPath}`)
+    : null;
   const allPhotos = serverPhotoUrl
     ? [{ url: serverPhotoUrl, ts: 'server', isServer: true }, ...userPhotosList]
     : userPhotosList;
@@ -354,18 +359,9 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
         // Falls back to localStorage resize if server upload fails.
         let serverOk = false;
         try {
-          const fd = new FormData();
-          fd.append('photo', f);
-          const res = await fetch(`${api?.state?.base || 'http://localhost:8000'}/api/cards/${c.id}/photo`, {
-            method: 'POST', body: fd,
-          });
-          if (res.ok) {
-            serverOk = true;
-            const data = await res.json().catch(() => null);
-            if (updateCard && data?.photo_path) {
-              await updateCard(c.id, { photo_path: data.photo_path });
-            }
-          }
+          const data = await api.uploadCardPhoto(c.id, f);
+          serverOk = true;
+          if (data?.photo_path) setPhotoOverride(data.photo_path);
         } catch (err) { console.warn('server photo upload failed:', err.message); }
         if (!serverOk) {
           try { await userPhotos.add(c.id, f); }
@@ -381,8 +377,8 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     const photo = allPhotos[idx];
     if (photo?.isServer) {
       try {
-        await fetch(`${_base}/api/cards/${c.id}/photo`, { method: 'DELETE' });
-        if (updateCard) await updateCard(c.id, { photo_path: null });
+        await api.deleteCardPhoto(c.id);
+        setPhotoOverride(null);
       } catch (_) {}
     } else {
       userPhotos.remove(c.id, serverPhotoUrl ? idx - 1 : idx);

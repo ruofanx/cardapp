@@ -13,6 +13,17 @@ from fastapi.testclient import TestClient
 
 import app as app_module
 import pricing_model.db as pmdb
+from auth import get_current_account
+
+
+@pytest.fixture(autouse=True)
+def fake_auth(monkeypatch):
+    app_module.app.dependency_overrides[get_current_account] = lambda: {
+        "id": "test-account-id", "email": "test@example.com", "plan": "pro", "trial_ends_at": None,
+    }
+    monkeypatch.setattr(app_module.db, "profile_ids_for_account", lambda account_id: [1, 2, 3, 4])
+    yield
+    app_module.app.dependency_overrides.pop(get_current_account, None)
 
 
 @pytest.fixture(autouse=True)

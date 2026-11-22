@@ -209,6 +209,21 @@ def list_users() -> list[User]:
         return [User(**dict(r)) for r in rows]
 
 
+def list_profiles(account_id: str) -> list[dict]:
+    """SQLite has no accounts. Local dev treats every seeded user as visible
+    to the logged-in session. Production uses db_postgres.list_profiles,
+    which only returns rows whose account_id matches."""
+    return [
+        {"id": u.id, "name": u.name, "account_id": None,
+         "avatar_color": u.avatar_color, "trade_mode": False}
+        for u in list_users()
+    ]
+
+
+def profile_ids_for_account(account_id: str) -> list[int]:
+    return [u.id for u in list_users()]
+
+
 def get_user(user_id: int) -> Optional[User]:
     with connect() as conn:
         r = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
