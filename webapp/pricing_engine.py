@@ -141,10 +141,37 @@ def _title_hp_is_condition(title: str) -> bool:
     return False
 
 
+def format_grade(grade) -> str:
+    """Whole grades are 10, not 10.0. eBay titles say \"PSA 10\"."""
+    try:
+        g = float(grade)
+    except (TypeError, ValueError):
+        return str(grade)
+    if g == int(g):
+        return str(int(g))
+    return str(g)
+
+
+def number_in_title(card_number: str | None, title: str) -> bool:
+    """Collector number as its own token. \"25\" must not match \"125\" or \"250\"."""
+    if not card_number:
+        return True
+    title_l = title.lower()
+    cn = card_number.strip().lower()
+    numerator = cn.split("/")[0].strip()
+    forms = {numerator, (numerator.lstrip("0") or numerator)}
+    if "/" in cn:
+        forms.add(cn)
+    for form in forms:
+        if form and re.search(rf"(?<!\d){re.escape(form)}(?!\d)", title_l):
+            return True
+    return False
+
+
 def build_ebay_query_string(query: CardQuery) -> str:
     parts = list(query.card.search_terms())
     if query.is_graded:
-        parts.append(f"{query.grade_company} {query.grade}")
+        parts.append(f"{query.grade_company} {format_grade(query.grade)}")
     else:
         for kw in ("PSA", "BGS", "CGC", "SGC", "graded", "slab", "slabbed"):
             parts.append(f"-{kw}")
@@ -388,15 +415,8 @@ def is_relevant_title(title: str, query: CardQuery) -> bool:
     # eBay's keyword search is loose — it returns listings for other card
     # numbers in the same set (e.g. querying "063/193" also surfaces "130/098").
     # Accept the numerator with and without leading zeros: "063" and "63".
-    cn = (query.card.card_number or "").strip()
-    if cn:
-        numerator = cn.split("/")[0].strip()
-        # Build the set of forms to accept: "063", "63" (stripped), "063/193"
-        num_forms = {numerator, numerator.lstrip("0") or numerator}
-        if "/" in cn:
-            num_forms.add(cn)
-        if not any(form in t for form in num_forms):
-            return False
+    if query.card.card_number and not number_in_title(query.card.card_number, t):
+        return False
     if not query.is_graded:
         if re.search(r"\b(psa|bgs|cgc|sgc)\b\s*\d", t):
             return False
@@ -405,8 +425,15 @@ def is_relevant_title(title: str, query: CardQuery) -> bool:
     if query.is_graded:
         if query.grade_company and query.grade_company.lower() not in t:
             return False
-        if query.grade and not re.search(rf"\b{re.escape(str(query.grade))}\b", t):
-            return False
+        if query.grade:
+            grade_txt = format_grade(query.grade)
+            # 10.5 is the sentinel for CGC/BGS/SGC top grades. Listings say
+            # "Pristine" or "Black Label", not "10.5".
+            if grade_txt == "10.5":
+                if not re.search(r"\b(10\.5|pristine|black label)\b", t):
+                    return False
+            elif not re.search(rf"(?<!\d){re.escape(grade_txt)}(?!\d)", t):
+                return False
 
     # Condition filter — only applied to raw (ungraded) queries.
     # NM: reject titles that explicitly mention a lower condition.

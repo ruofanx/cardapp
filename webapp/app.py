@@ -774,7 +774,9 @@ async def _resolve_rarity_and_release_date(card: "db.Card") -> tuple[Optional[st
     callers must degrade gracefully (see spec Error handling)."""
     if card.language == "japanese":
         import tcgdex_lookup
-        result = await tcgdex_lookup.lookup_jp_card(card.name, card.set_name)
+        result = await tcgdex_lookup.lookup_jp_card(
+            card.name, card.set_name, card.card_number,
+        )
         if result is None:
             return None, None
         release_date = await _resolve_jp_set_release_date(card.set_name)
@@ -2248,7 +2250,12 @@ async def _identify_inner(request: Request):
                 candidates.append(d)
                 seen_ids.add(d.get("tcg_id"))
             if not market_price and broad:
-                market_price = broad[0].market_price
+                # A name-only hit can be a different printing. Only borrow its
+                # price when the printed number agrees (or OCR found none).
+                ocr_num = card_lookup._normalize_number(result.identity.card_number)
+                broad_num = card_lookup._normalize_number(broad[0].card_number)
+                if not ocr_num or ocr_num == broad_num:
+                    market_price = broad[0].market_price
             if not image_url and broad:
                 # Only trust this as THIS card's artwork if the printed
                 # number OCR read off the photo agrees with the broad
@@ -2297,8 +2304,8 @@ async def _identify_inner(request: Request):
                 })
             if not image_url and ebay_items:
                 image_url = ebay_items[0].image_url
-            if not market_price and ebay_items:
-                market_price = ebay_items[0].price_usd
+            # Do not fill market_price from the first Browse hit. Those rows
+            # are unfiltered asks and often a different card.
         except Exception as e:
             log.warning("eBay Browse augment failed: %s", e)
 

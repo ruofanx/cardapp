@@ -113,23 +113,17 @@ async def _get_browse_price(
         log.warning("eBay Browse median lookup failed: %s", e)
         return None
 
-    if language.lower() == "japanese":
-        cn_digits = (card_number or "").split("/")[0].strip()
-        is_sir_range = cn_digits.isdigit() and int(cn_digits) > 130
-        primary_looks_wrong = (
-            br is None
-            or (is_sir_range and br["median_usd"] < 50)
-            or (br is not None and br["sample_size"] < 3)
-        )
-        if primary_looks_wrong:
-            try:
-                br = await ebay_browse_api.median_relevant_price(
-                    name, set_name=None, card_number=None,
-                    language="japanese", sample_size=20, nm_only=True,
-                )
-            except Exception as e:
-                log.warning("eBay Browse JP fallback failed: %s", e)
-                br = None
+    # A real median under $50 on a number past 130 is usually a cheap main-set
+    # card, not a mis-hit SIR. Only widen to a name-only search when the
+    # primary query found nothing, and keep that miss if the retry fails too.
+    if language.lower() == "japanese" and br is None:
+        try:
+            br = await ebay_browse_api.median_relevant_price(
+                name, set_name=None, card_number=None,
+                language="japanese", sample_size=20, nm_only=True,
+            )
+        except Exception as e:
+            log.warning("eBay Browse JP fallback failed: %s", e)
 
     if not br or not br.get("median_usd"):
         return None

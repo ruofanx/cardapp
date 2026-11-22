@@ -288,8 +288,10 @@ async def median_relevant_price(
         t = it.title.lower()
         if name_tokens and not name_is_non_ascii and not any(tk in t for tk in name_tokens):
             continue
-        if num_str and num_str not in t:
-            continue
+        if num_str:
+            from pricing_engine import number_in_title
+            if not number_in_title(num_str, t):
+                continue
         # Drop bulk lot listings — "156" in a title often refers to the lot
         # quantity ("Sylveon ex Japanese 156-card lot"), not the card number.
         if any(kw in t for kw in (" lot", " bulk", " bundle", "x lot", " set of")):
@@ -309,6 +311,14 @@ async def median_relevant_price(
             continue
         if grade_company and grade_company.lower() not in t:
             continue
+        if grade_company and grade is not None:
+            from pricing_engine import format_grade
+            grade_txt = format_grade(grade)
+            if grade_txt == "10.5":
+                if not re.search(r"\b(10\.5|pristine|black label)\b", t):
+                    continue
+            elif not re.search(rf"(?<!\d){re.escape(grade_txt)}(?!\d)", t):
+                continue
         if nm_only and not grade_company and (
             _COND_LP_RE.search(it.title) or _COND_MP_RE.search(it.title)
             or _COND_DMG_RE.search(it.title) or _title_hp_is_condition(it.title)
