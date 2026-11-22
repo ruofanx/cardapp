@@ -72,11 +72,7 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   useEffect(() => {
     if (!authed || !currentUser?.id || backend?.online === false) return;
     setHistoryLoading(true);
-    const base = api.state?.base || 'http://localhost:8000';
-    const token = api.state?.token;
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    fetch(`${base}/api/users/${currentUser.id}/portfolio-history?days=1095`, { headers })
-      .then(r => r.ok ? r.json() : null)
+    api.getPortfolioHistory(currentUser.id, 1095)
       .then(data => { if (data?.points) setAllHistory(data.points); })
       .catch(() => {})
       .finally(() => setHistoryLoading(false));
@@ -130,13 +126,9 @@ function HomeScreen({ tweaks, navigate, collection, currentUser, refreshPrice, b
   const [cardHistories, setCardHistories] = useState({});
   useEffect(() => {
     if (!watchlist.length || backend?.online === false) return;
-    const base = api.state?.base || 'http://localhost:8000';
-    const token = api.state?.token;
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
     watchlist.forEach(c => {
       if (cardHistories[c.id]) return;
-      fetch(`${base}/api/cards/${c.id}/price-history`, { headers })
-        .then(r => r.ok ? r.json() : null)
+      api.getPriceHistory(c.id)
         .then(data => {
           if (data?.points?.length) {
             setCardHistories(prev => ({

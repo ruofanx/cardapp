@@ -358,30 +358,53 @@ def _attach_tags(cur, cards: list[Card]) -> None:
 # Price history
 # ---------------------------------------------------------------------------
 
+def _as_utc(value) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).replace("T", " ")[:19]
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _is_recent_duplicate(last_at, last_price, price_usd, new_at, window_sec: int = 60) -> bool:
+    """Same price logged within window_sec of new_at. A later day with an
+    unchanged price is a new point — the chart otherwise stays stuck on the
+    last day the price moved."""
+    if last_price is None or abs(float(last_price) - float(price_usd)) >= 0.005:
+        return False
+    prev = _as_utc(last_at)
+    nxt = _as_utc(new_at) or datetime.now(timezone.utc)
+    if prev is None:
+        return False
+    return abs((nxt - prev).total_seconds()) < window_sec
+
+
 def log_price(card_id: int, price_usd: float, source: Optional[str] = None,
               at: Optional[str] = None) -> None:
     if price_usd is None:
         return
+    new_at = at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with connect() as conn:
         cur = conn.cursor()
+        # Serialize check-then-insert for this card. Two overlapping refreshes
+        # otherwise both pass the duplicate check and write two points.
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (int(card_id),))
         last = _fetchone(cur,
-            "SELECT price_usd FROM price_history "
+            "SELECT recorded_at, price_usd FROM price_history "
             "WHERE card_id = %s ORDER BY recorded_at DESC LIMIT 1",
             (card_id,),
         )
-        if last and abs(float(last["price_usd"]) - float(price_usd)) < 0.005:
+        if last and _is_recent_duplicate(last["recorded_at"], last["price_usd"], price_usd, new_at):
             return
-        if at:
-            cur.execute(
-                "INSERT INTO price_history (card_id, recorded_at, price_usd, source) "
-                "VALUES (%s, %s, %s, %s)",
-                (card_id, at, float(price_usd), source),
-            )
-        else:
-            cur.execute(
-                "INSERT INTO price_history (card_id, price_usd, source) VALUES (%s, %s, %s)",
-                (card_id, float(price_usd), source),
-            )
+        cur.execute(
+            "INSERT INTO price_history (card_id, recorded_at, price_usd, source) "
+            "VALUES (%s, %s, %s, %s)",
+            (card_id, new_at, float(price_usd), source),
+        )
 
 
 def get_price_history(card_id: int, *, since: Optional[str] = None,
@@ -759,6 +782,85 @@ def get_public_profile(profile_id: int) -> dict | None:
             for r in cur.fetchall()
         ]
         return {"profile": profile, "wants": wants}
+
+
+def portfolio_history(user_id: int, days: int = 365) -> list[dict]:
+    """Daily portfolio value series, oldest first. Same shape as db.py.
+
+    For each date that any owned (non-wishlist) card has a price_history
+    point, sum the last known price of every card the user already owned
+    that day.
+    """
+    from bisect import bisect_right
+    from collections import defaultdict
+    from datetime import date, timedelta
+
+    since = (date.today() - timedelta(days=days)).isoformat()
+    with connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT c.id, c.created_at, c.current_market_price
+            FROM cards c
+            WHERE c.user_id = %s
+              AND c.id NOT IN (
+                  SELECT ct.card_id FROM card_tags ct
+                  JOIN tags t ON t.id = ct.tag_id WHERE t.name = 'wishlist'
+              )
+            """,
+            (user_id,),
+        )
+        cards_rows = cur.fetchall()
+        if not cards_rows:
+            return []
+
+        def _day(value) -> str:
+            if value is None:
+                return "2000-01-01"
+            if hasattr(value, "strftime"):
+                return value.strftime("%Y-%m-%d")
+            return str(value)[:10]
+
+        card_ids = [r["id"] for r in cards_rows]
+        card_added = {r["id"]: _day(r["created_at"]) for r in cards_rows}
+        card_current = {r["id"]: float(r["current_market_price"] or 0) for r in cards_rows}
+        placeholders = ",".join(["%s"] * len(card_ids))
+        cur.execute(
+            f"SELECT card_id, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d, price_usd "
+            f"FROM price_history WHERE card_id IN ({placeholders}) "
+            f"ORDER BY card_id, recorded_at",
+            card_ids,
+        )
+        history_rows = cur.fetchall()
+
+    raw: dict[int, dict[str, float]] = defaultdict(dict)
+    for row in history_rows:
+        raw[row["card_id"]][row["d"]] = float(row["price_usd"])
+
+    card_dates: dict[int, list[str]] = {}
+    card_prices: dict[int, list[float]] = {}
+    for cid, by_date in raw.items():
+        sorted_dates = sorted(by_date)
+        card_dates[cid] = sorted_dates
+        card_prices[cid] = [by_date[d] for d in sorted_dates]
+
+    all_dates = sorted({d for entries in raw.values() for d in entries if d >= since})
+    if not all_dates:
+        return []
+
+    result = []
+    for day in all_dates:
+        total = 0.0
+        for cid in card_ids:
+            if card_added.get(cid, "9999-99-99") > day:
+                continue
+            dates_list = card_dates.get(cid, [])
+            prices_list = card_prices.get(cid, [])
+            idx = bisect_right(dates_list, day) - 1
+            total += prices_list[idx] if idx >= 0 else card_current[cid]
+        if total > 0:
+            result.append({"date": day, "value": round(total, 2)})
+    return result
 
 
 def get_triggered_alerts(user_id: int) -> list[dict]:

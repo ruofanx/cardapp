@@ -15,7 +15,7 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from bisect import bisect_right
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -125,6 +125,7 @@ class Card:
     purchase_price: Optional[float] = None
     purchase_date: Optional[str] = None
     current_market_price: Optional[float] = None
+    alert_price: Optional[float] = None
     last_priced_at: Optional[str] = None
     image_url: Optional[str] = None      # catalogue image (TCGplayer / TCGdex / Pokemon TCG API)
     photo_path: Optional[str] = None     # user-uploaded photo, if any
@@ -170,6 +171,10 @@ def init_db():
             pass
         try:
             conn.execute("ALTER TABLE cards ADD COLUMN product_type TEXT NOT NULL DEFAULT 'card'")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE cards ADD COLUMN alert_price REAL")
         except sqlite3.OperationalError:
             pass
         for name, color in SEED_USERS:
@@ -222,6 +227,25 @@ def list_profiles(account_id: str) -> list[dict]:
 
 def profile_ids_for_account(account_id: str) -> list[int]:
     return [u.id for u in list_users()]
+
+
+def get_account(uid: str):
+    """Accounts live in Postgres. Local SQLite has none."""
+    return None
+
+
+def update_account_plan(uid: str, *, plan: str, trial_ends_at):
+    raise RuntimeError("account billing requires DATABASE_URL")
+
+
+def get_scan_count(account_id: str, month: str) -> int:
+    """Local SQLite has no accounts billing table. The free-scan cap is
+    enforced in Postgres (production)."""
+    return 0
+
+
+def increment_scan_count(account_id: str, month: str) -> int:
+    return 0
 
 
 def get_user(user_id: int) -> Optional[User]:
@@ -329,22 +353,44 @@ def update_market_price(card_id: int, price: float) -> Optional[Card]:
 # Price history
 # ---------------------------------------------------------------------------
 
+def _as_utc(value) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    text = str(value).replace("T", " ")[:19]
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _is_recent_duplicate(last_at, last_price, price_usd, new_at, window_sec: int = 60) -> bool:
+    if last_price is None or abs(float(last_price) - float(price_usd)) >= 0.005:
+        return False
+    prev = _as_utc(last_at)
+    nxt = _as_utc(new_at) or datetime.now(timezone.utc)
+    if prev is None:
+        return False
+    return abs((nxt - prev).total_seconds()) < window_sec
+
+
 def log_price(card_id: int, price_usd: float, source: Optional[str] = None,
               at: Optional[str] = None) -> None:
-    """Append a row to price_history for this card. Idempotent against
-    duplicates: if the most-recent row has the same price within the last
-    60 seconds we skip — protects against double-logging when the UI
-    re-fires refresh in quick succession."""
+    """Append a row to price_history for this card. Skip only when the latest
+    row is the same price within 60 seconds — a later unchanged price is a
+    new snapshot so charts keep a point per day."""
     if price_usd is None:
         return
+    new_at = at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         last = conn.execute(
             "SELECT recorded_at, price_usd FROM price_history "
             "WHERE card_id = ? ORDER BY recorded_at DESC LIMIT 1",
             (card_id,),
         ).fetchone()
-        if last and abs(float(last["price_usd"]) - float(price_usd)) < 0.005:
-            # Same price as last logged snapshot — don't spam the history.
+        if last and _is_recent_duplicate(last["recorded_at"], last["price_usd"], price_usd, new_at):
             return
         if at:
             conn.execute(
