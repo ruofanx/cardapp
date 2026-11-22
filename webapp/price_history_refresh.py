@@ -18,26 +18,73 @@ import time
 from datetime import datetime, timezone
 
 import logging
+import os
 
-import db
+# Same choice as app.py: production sets DATABASE_URL. The weekly job used to
+# import the SQLite module unconditionally, so chart history never landed in
+# the Postgres rows the Overview chart reads.
+if os.environ.get("DATABASE_URL"):
+    import db_postgres as db
+else:
+    import db
 import pricecharting_lookup as pc
+
+_POSTGRES = bool(os.environ.get("DATABASE_URL"))
 
 log = logging.getLogger(__name__)
 SOURCE = "pricecharting_chart_backfill"
 REQUEST_DELAY_SECONDS = 1.5
 
 
+def _recorded_day(value) -> str:
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    return str(value)[:10]
+
+
+def _existing_dates(card_id: int) -> set[str]:
+    sql = "SELECT recorded_at FROM price_history WHERE card_id = %s" if _POSTGRES \
+        else "SELECT recorded_at FROM price_history WHERE card_id = ?"
+    with db.connect() as conn:
+        if _POSTGRES:
+            cur = conn.cursor()
+            cur.execute(sql, (card_id,))
+            rows = cur.fetchall()
+        else:
+            rows = conn.execute(sql, (card_id,)).fetchall()
+    return {_recorded_day(row["recorded_at"]) for row in rows}
+
+
+def _insert_rows(rows: list[tuple]) -> None:
+    sql = (
+        "INSERT INTO price_history (card_id, recorded_at, price_usd, source, source_url) "
+        "VALUES (%s, %s, %s, %s, %s)"
+        if _POSTGRES else
+        "INSERT INTO price_history (card_id, recorded_at, price_usd, source, source_url) "
+        "VALUES (?, ?, ?, ?, ?)"
+    )
+    with db.connect() as conn:
+        if _POSTGRES:
+            cur = conn.cursor()
+            cur.executemany(sql, rows)
+        else:
+            conn.executemany(sql, rows)
+            conn.commit()
+
+
+def _fetch_cards(sql_pg: str, sql_sqlite: str):
+    with db.connect() as conn:
+        if _POSTGRES:
+            cur = conn.cursor()
+            cur.execute(sql_pg)
+            return cur.fetchall()
+        return conn.execute(sql_sqlite).fetchall()
+
+
 async def refresh_one(card_id: int, name: str, cutoff_ms: float, fetch) -> int:
     """Fetch chart history for one card/product and insert new rows.
     `fetch` is a zero-arg async callable returning `(points, url)` or None."""
-    with db.connect() as conn:
-        existing_dates = {
-            row["recorded_at"][:10]
-            for row in conn.execute(
-                "SELECT recorded_at FROM price_history WHERE card_id = ?",
-                (card_id,),
-            ).fetchall()
-        }
+    existing_dates = _existing_dates(card_id)
 
     result = await fetch()
     if not result:
@@ -57,13 +104,7 @@ async def refresh_one(card_id: int, name: str, cutoff_ms: float, fetch) -> int:
         existing_dates.add(recorded_at[:10])
 
     if rows:
-        with db.connect() as conn:
-            conn.executemany(
-                "INSERT INTO price_history (card_id, recorded_at, price_usd, source, source_url) "
-                "VALUES (?, ?, ?, ?, ?)",
-                rows,
-            )
-            conn.commit()
+        _insert_rows(rows)
     log.info("price_history backfill: card %s %r → +%d rows from %s", card_id, name, len(rows), url)
     return len(rows)
 
@@ -75,41 +116,57 @@ async def refresh_all(min_days: int = 90) -> dict:
     """
     cutoff_ms = time.time() * 1000 - min_days * 86400_000
 
-    with db.connect() as conn:
-        raw_cards = conn.execute(
-            "SELECT id, name, set_name, card_number, language, variant "
-            "FROM cards WHERE is_graded = 0 AND product_type = 'card' ORDER BY id"
-        ).fetchall()
-        sealed_products = conn.execute(
-            "SELECT id, name, set_name, language, product_type "
-            "FROM cards WHERE product_type != 'card' ORDER BY id"
-        ).fetchall()
+    raw_cards = _fetch_cards(
+        "SELECT id, name, set_name, card_number, language, variant "
+        "FROM cards WHERE is_graded = FALSE AND product_type = 'card' ORDER BY id",
+        "SELECT id, name, set_name, card_number, language, variant "
+        "FROM cards WHERE is_graded = 0 AND product_type = 'card' ORDER BY id",
+    )
+    sealed_products = _fetch_cards(
+        "SELECT id, name, set_name, language, product_type "
+        "FROM cards WHERE product_type <> 'card' ORDER BY id",
+        "SELECT id, name, set_name, language, product_type "
+        "FROM cards WHERE product_type != 'card' ORDER BY id",
+    )
 
     total_inserted = 0
 
     log.info("price_history refresh: %d raw cards", len(raw_cards))
     for card in raw_cards:
-        total_inserted += await refresh_one(
-            card["id"], card["name"], cutoff_ms,
-            lambda c=card: pc.fetch_chart_history(
-                c["name"], c["set_name"], c["card_number"],
-                language=c["language"], variant=c["variant"],
-            ),
-        )
+        try:
+            total_inserted += await refresh_one(
+                card["id"], card["name"], cutoff_ms,
+                lambda c=card: pc.fetch_chart_history(
+                    c["name"], c["set_name"], c["card_number"],
+                    language=c["language"], variant=c["variant"],
+                ),
+            )
+        except Exception as e:
+            log.warning("price_history refresh failed for card %s (%s): %s",
+                        card["id"], card["name"], e)
         await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
     log.info("price_history refresh: %d sealed products", len(sealed_products))
     for card in sealed_products:
-        total_inserted += await refresh_one(
-            card["id"], card["name"], cutoff_ms,
-            lambda c=card: pc.fetch_sealed_chart_history(
-                c["name"], c["set_name"], c["product_type"], language=c["language"],
-            ),
-        )
+        try:
+            total_inserted += await refresh_one(
+                card["id"], card["name"], cutoff_ms,
+                lambda c=card: pc.fetch_sealed_chart_history(
+                    c["name"], c["set_name"], c["product_type"], language=c["language"],
+                ),
+            )
+        except Exception as e:
+            log.warning("price_history refresh failed for sealed %s (%s): %s",
+                        card["id"], card["name"], e)
         await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
     log.info("price_history refresh done — inserted %d rows across %d cards",
              total_inserted, len(raw_cards) + len(sealed_products))
+    try:
+        from refresh_job import mark_job_ran
+        mark_job_ran("weekly_price_history_refresh")
+    except Exception as e:
+        log.warning("could not record weekly history run: %s", e)
 
     return {
         "raw_cards": len(raw_cards),

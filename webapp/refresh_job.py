@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -76,6 +78,7 @@ async def refresh_all_cards() -> dict:
         "ran_at": datetime.now(timezone.utc).isoformat(),
     }
     log.info("Daily price refresh done: %s", summary)
+    mark_job_ran("daily_price_refresh")
     return summary
 
 
@@ -142,7 +145,7 @@ def start_scheduler():
     _scheduler.add_job(
         price_history_refresh.refresh_all,
         CronTrigger(day_of_week="sun", hour=6, minute=0, timezone=DAILY_TIMEZONE),
-        kwargs={"min_days": 35},
+        kwargs={"min_days": 70},
         id="weekly_price_history_refresh",
         name="Weekly price-history refresh (Sun 6am CT)",
         replace_existing=True,
@@ -157,11 +160,135 @@ def start_scheduler():
         misfire_grace_time=24 * 60 * 60,   # 1 day grace
     )
     _scheduler.start()
+    _schedule_catch_up()
     log.info("Scheduler started: daily price refresh @ %02d:00 %s, "
              "weekly price-history refresh Sun 06:00 %s, "
              "monthly pricing-model refit 1st @ 05:00 %s",
              DAILY_HOUR_LOCAL, DAILY_TIMEZONE, DAILY_TIMEZONE, DAILY_TIMEZONE)
     return _scheduler
+
+
+def _job_db():
+    """Persistent last-run timestamps live in Postgres. Local SQLite reloads
+    would otherwise treat every process start as a missed day."""
+    if not os.environ.get("DATABASE_URL"):
+        return None
+    import db_postgres
+    return db_postgres
+
+
+def _ensure_job_table(pg) -> None:
+    with pg.connect() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """CREATE TABLE IF NOT EXISTS job_runs (
+                job_id TEXT PRIMARY KEY,
+                ran_at TIMESTAMPTZ NOT NULL
+            )"""
+        )
+
+
+def mark_job_ran(job_id: str) -> None:
+    pg = _job_db()
+    if pg is None:
+        return
+    try:
+        _ensure_job_table(pg)
+        with pg.connect() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO job_runs (job_id, ran_at) VALUES (%s, NOW()) "
+                "ON CONFLICT (job_id) DO UPDATE SET ran_at = EXCLUDED.ran_at",
+                (job_id,),
+            )
+    except Exception as e:
+        log.warning("could not record job run %s: %s", job_id, e)
+
+
+def last_job_run(job_id: str) -> datetime | None:
+    pg = _job_db()
+    if pg is None:
+        return None
+    try:
+        _ensure_job_table(pg)
+        with pg.connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT ran_at FROM job_runs WHERE job_id = %s", (job_id,))
+            row = cur.fetchone()
+    except Exception as e:
+        log.warning("could not read job run %s: %s", job_id, e)
+        return None
+    if not row or row["ran_at"] is None:
+        return None
+    ran = row["ran_at"]
+    return ran if ran.tzinfo else ran.replace(tzinfo=timezone.utc)
+
+
+def _last_daily_slot(now: datetime, hour: int) -> datetime:
+    slot = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if slot > now:
+        slot -= timedelta(days=1)
+    return slot
+
+
+def _last_weekly_slot(now: datetime, hour: int, weekday: int) -> datetime:
+    delta = (now.weekday() - weekday) % 7
+    slot = (now - timedelta(days=delta)).replace(hour=hour, minute=0, second=0, microsecond=0)
+    if slot > now:
+        slot -= timedelta(days=7)
+    return slot
+
+
+def _last_monthly_slot(now: datetime, hour: int, day: int) -> datetime:
+    slot = now.replace(day=day, hour=hour, minute=0, second=0, microsecond=0)
+    if slot > now:
+        # previous month
+        first = now.replace(day=1, hour=hour, minute=0, second=0, microsecond=0)
+        slot = (first - timedelta(days=1)).replace(day=day, hour=hour, minute=0, second=0, microsecond=0)
+    return slot
+
+
+def job_is_overdue(job_id: str, slot: datetime) -> bool:
+    ran = last_job_run(job_id)
+    if ran is None:
+        return True
+    return ran.astimezone(slot.tzinfo) < slot
+
+
+async def _catch_up() -> None:
+    """Run a scheduled job if this process was down when it was due.
+
+    APScheduler's misfire window only covers a scheduler that was already
+    running. A Railway restart computes the next cron as the following day
+    and would otherwise skip the one that was missed.
+    """
+    now = datetime.now(ZoneInfo(DAILY_TIMEZONE))
+    plan = (
+        ("daily_price_refresh", _last_daily_slot(now, DAILY_HOUR_LOCAL), refresh_all_cards, {}),
+        ("weekly_price_history_refresh", _last_weekly_slot(now, 6, 6),
+         price_history_refresh.refresh_all, {"min_days": 70}),
+        ("monthly_pricing_model_refit", _last_monthly_slot(now, 5, 1),
+         pricing_model_jobs.monthly_refit, {}),
+    )
+    for job_id, slot, func, kwargs in plan:
+        if not job_is_overdue(job_id, slot):
+            continue
+        log.info("Catch-up: %s was due at %s", job_id, slot.isoformat())
+        try:
+            await func(**kwargs)
+        except Exception as e:
+            log.warning("Catch-up %s failed: %s", job_id, e)
+
+
+def _schedule_catch_up() -> None:
+    if _job_db() is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        log.info("No running loop; skipped scheduler catch-up")
+        return
+    loop.create_task(_catch_up())
 
 
 def shutdown_scheduler():

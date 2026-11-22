@@ -98,3 +98,22 @@ def test_monthly_refit_survives_harvest_failure_and_keeps_previous_run():
     assert "harvest boom" in result["error"]
     latest = pmdb.get_latest_model_run()
     assert latest.r_squared_raw == 0.8  # untouched
+
+
+def test_monthly_refit_does_not_fit_a_partial_harvest():
+    _fresh_db()
+    _seed_minimal_corpus()
+    existing = pmdb.ModelRun(
+        id=None, fitted_at="", coefficients_raw={"intercept": 1.0}, coefficients_psa10={},
+        lifecycle_curve={}, market_index={}, psa9_fraction=0.4,
+        residual_std_raw=0.05, residual_std_psa10=0.0,
+        r_squared_raw=0.8, r_squared_psa10=0.0, n_cards=500,
+    )
+    pmdb.save_model_run(existing)
+    harvest = {"total_cards": 0, "per_set": {"sv1": 10, "sv2": 0}}
+    with patch("pricing_model.corpus.harvest_all", new=AsyncMock(return_value=harvest)), \
+         patch("pricing_model.model.fit_model", side_effect=AssertionError("should not fit")):
+        result = asyncio.run(jobs.monthly_refit())
+    assert result["kept_previous"] is True
+    assert result["incomplete"] is True
+    assert pmdb.get_latest_model_run().r_squared_raw == 0.8
