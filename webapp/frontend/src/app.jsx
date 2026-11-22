@@ -118,6 +118,7 @@ export default function App() {
         current_market_price: card.usd ?? null,
         purchase_price: card.purchase_price ?? null,
         tags: Array.isArray(card.tags) ? card.tags : [],
+        product_type: card.product_type ?? 'card',
       })
       if (saved?.id && card._capturedPhotoFile) {
         try { await userPhotos.add(saved.id, card._capturedPhotoFile) }

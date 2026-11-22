@@ -139,7 +139,7 @@ export function normalizeCard(c) {
     change:    num(c.gain_loss_pct) ?? num(c.change_24h) ?? num(c.change) ?? 0,
     gain_loss: num(c.gain_loss),
     purchase_price: num(c.purchase_price),
-    holo:      Boolean(c.holo ?? c.is_holo ?? c.foil),
+    holo:      Boolean(c.holo ?? c.is_holo ?? c.foil) || /holo/i.test(String(c.variant || c.rarity || '')),
     bulk:      Boolean(c.bulk) || (usd > 0 && usd < 5),
     hue:       num(c.hue) ?? hashHue(c.name || ''),
     glyph:     c.glyph || 'spark',
@@ -454,6 +454,15 @@ export const api = {
       return await request(P.userRankings(userId, sort))
     } catch (e) {
       return { rankings: [] }
+    }
+  },
+
+  async getPortfolioHistory(userId, days = 1095) {
+    if (!userId) return { points: [] }
+    try {
+      return await request(`/api/users/${userId}/portfolio-history?days=${days}`)
+    } catch {
+      return null
     }
   },
 

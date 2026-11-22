@@ -221,7 +221,7 @@ function DetailScreen({ tweaks, navigate, addToCollection, removeCard, refreshPr
     // Re-fetch when the card identity changes, or after a refresh that
     // updates last_priced_at / current_market_price (a fresh snapshot lands).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [c?.id, c?.last_priced_at, c?.current_market_price]);
+  }, [c?.id, c?.last_priced_at, c?.usd]);
   // Use the real gain_loss_pct from the backend (set from purchase_price vs
   // current_market_price). Falls back to 0 when unknown.
   const change = Number(c.change) || 0;
