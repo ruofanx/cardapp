@@ -34,7 +34,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Up
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
@@ -56,6 +56,71 @@ def _resolve_photo(d: dict) -> dict:
         except Exception:
             pass
     return d
+
+
+# User photos and OCR uploads. Images only — HTML/SVG in this directory would
+# be served on the app origin and could read the Supabase token in localStorage.
+MAX_UPLOAD_BYTES = 12 * 1024 * 1024
+ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+
+
+def _account_profile_ids(account: dict) -> set[int]:
+    return set(db.profile_ids_for_account(account["id"]))
+
+
+def _require_owned_user(user_id: int, account: dict) -> None:
+    if user_id not in _account_profile_ids(account):
+        raise HTTPException(403, "profile not owned by this account")
+
+
+def _require_owned_card(card_id: int, account: dict):
+    card = db.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "card not found")
+    _require_owned_user(card.user_id, account)
+    return card
+
+
+def _require_admin(account: dict) -> None:
+    """run-now and identify-cache reprice or wipe shared state. ADMIN_EMAILS
+    is a comma-separated list of Supabase account emails allowed to call them.
+    An empty list denies everyone."""
+    raw = os.environ.get("ADMIN_EMAILS", "")
+    allowed = {e.strip().lower() for e in raw.split(",") if e.strip()}
+    email = (account.get("email") or "").strip().lower()
+    if not email or email not in allowed:
+        raise HTTPException(403, "admin only")
+
+
+def safe_photo_file(photo_path: str | None, uploads_dir: Path) -> Path | None:
+    """Resolve a stored photo_path to a file inside uploads_dir, or None.
+
+    Only `/uploads/<single-segment image>` is a local file. Anything else
+    (Supabase keys, `..`, nested paths, non-image suffixes) is not deleted
+    and not served.
+    """
+    if not photo_path or not photo_path.startswith("/uploads/"):
+        return None
+    rel = photo_path[len("/uploads/"):]
+    if not rel or "/" in rel or "\\" in rel or rel.startswith("."):
+        return None
+    suffix = Path(rel).suffix.lower()
+    if suffix not in ALLOWED_IMAGE_SUFFIXES:
+        return None
+    uploads = uploads_dir.resolve()
+    local = (uploads / rel).resolve()
+    try:
+        local.relative_to(uploads)
+    except ValueError:
+        return None
+    return local
+
+
+def _image_suffix(filename: str | None) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in ALLOWED_IMAGE_SUFFIXES:
+        raise HTTPException(400, f"unsupported file type {suffix or '(none)'}")
+    return suffix
 
 from trade_proposer import propose_trades
 import card_lookup
@@ -128,8 +193,9 @@ def health_check():
 
 @app.post("/api/refresh-prices/run-now")
 async def run_refresh_now(account: dict = Depends(get_current_account)):
-    """Manually trigger the daily refresh job. Useful for testing without
-    waiting until 7am."""
+    """Manually trigger the daily refresh job. Admin only — it walks every
+    collection. Set ADMIN_EMAILS to the owner's account email."""
+    _require_admin(account)
     from refresh_job import refresh_all_cards
     summary = await refresh_all_cards()
     return summary
@@ -175,7 +241,8 @@ class CardPatch(BaseModel):
     current_market_price: Optional[float] = None
     image_url: Optional[str] = None
     notes: Optional[str] = None
-    photo_path: Optional[str] = None
+    # photo_path is set only by the photo upload route. Clients must not
+    # write it — a crafted path was unlinked on DELETE (path traversal).
     product_type: Optional[str] = None
     # When provided, this REPLACES the card's tag set. Names are matched
     # case-insensitively against the user's existing tags; new names are
@@ -212,10 +279,10 @@ class SoldListingsRequest(BaseModel):
 
 class TradeRequest(BaseModel):
     user_id: int
-    target_value: float
-    tolerance: float = 5.0
-    max_combo_size: int = 5
-    max_results: int = 10
+    target_value: float = Field(gt=0, le=1_000_000)
+    tolerance: float = Field(default=5.0, ge=0, le=500)
+    max_combo_size: int = Field(default=5, ge=1, le=5)
+    max_results: int = Field(default=10, ge=1, le=25)
     exclude_card_ids: list[int] = []
     filter_tag_id: Optional[int] = None     # restrict combos to cards with this tag
 
@@ -430,14 +497,13 @@ def export_collection(profile: dict = Depends(get_current_profile)):
 
 
 @app.get("/api/users")
-def get_users(account: dict | None = Depends(get_current_account_optional)):
-    if account:
-        return db.list_profiles(account["id"])
-    return [u.__dict__ for u in db.list_users()]  # unauthenticated fallback (local dev)
+def get_users(account: dict = Depends(get_current_account)):
+    return db.list_profiles(account["id"])
 
 
 @app.get("/api/users/{user_id}/portfolio")
 def get_portfolio(user_id: int, account: dict = Depends(get_current_account)):
+    _require_owned_user(user_id, account)
     try:
         return db.portfolio_summary(user_id).__dict__
     except ValueError as e:
@@ -448,6 +514,7 @@ def get_portfolio(user_id: int, account: dict = Depends(get_current_account)):
 def get_portfolio_history(user_id: int, days: int = 365,
                            account: dict = Depends(get_current_account)):
     """Daily portfolio value series. Returns [{date, value}] oldest-first."""
+    _require_owned_user(user_id, account)
     return {"points": db.portfolio_history(user_id, days=min(days, 1095))}
 
 
@@ -457,6 +524,7 @@ def get_portfolio_history(user_id: int, days: int = 365,
 
 @app.get("/api/users/{user_id}/cards")
 def get_cards(user_id: int, tag_id: Optional[int] = None, account: dict = Depends(get_current_account)):
+    _require_owned_user(user_id, account)
     cards = db.list_cards(user_id, tag_id=tag_id)
     return [_card_to_dict(c) for c in cards]
 
@@ -464,12 +532,14 @@ def get_cards(user_id: int, tag_id: Optional[int] = None, account: dict = Depend
 # --- Tags -------------------------------------------------------------------
 
 @app.get("/api/users/{user_id}/tags")
-def get_tags(user_id: int):
+def get_tags(user_id: int, account: dict = Depends(get_current_account)):
+    _require_owned_user(user_id, account)
     return [_tag_to_dict(t) for t in db.list_tags(user_id)]
 
 
 @app.post("/api/users/{user_id}/tags")
-def create_tag(user_id: int, payload: TagCreate):
+def create_tag(user_id: int, payload: TagCreate, account: dict = Depends(get_current_account)):
+    _require_owned_user(user_id, account)
     if not db.get_user(user_id):
         raise HTTPException(404, f"unknown user_id {user_id}")
     try:
@@ -480,7 +550,11 @@ def create_tag(user_id: int, payload: TagCreate):
 
 
 @app.patch("/api/tags/{tag_id}")
-def patch_tag(tag_id: int, payload: TagPatch):
+def patch_tag(tag_id: int, payload: TagPatch, account: dict = Depends(get_current_account)):
+    existing = db.get_tag(tag_id)
+    if not existing:
+        raise HTTPException(404, "tag not found")
+    _require_owned_user(existing.user_id, account)
     changes = {k: v for k, v in payload.dict().items() if v is not None}
     if not changes:
         raise HTTPException(400, "no fields provided")
@@ -491,24 +565,32 @@ def patch_tag(tag_id: int, payload: TagPatch):
 
 
 @app.delete("/api/tags/{tag_id}")
-def delete_tag(tag_id: int):
+def delete_tag(tag_id: int, account: dict = Depends(get_current_account)):
+    existing = db.get_tag(tag_id)
+    if not existing:
+        raise HTTPException(404, "tag not found")
+    _require_owned_user(existing.user_id, account)
     if not db.delete_tag(tag_id):
         raise HTTPException(404, "tag not found")
     return {"deleted": True, "tag_id": tag_id}
 
 
 @app.post("/api/cards/{card_id}/tags")
-def attach_tag(card_id: int, payload: TagAttach):
-    if not db.get_card(card_id):
-        raise HTTPException(404, "card not found")
-    if not db.get_tag(payload.tag_id):
+def attach_tag(card_id: int, payload: TagAttach, account: dict = Depends(get_current_account)):
+    card = _require_owned_card(card_id, account)
+    tag = db.get_tag(payload.tag_id)
+    if not tag or tag.user_id != card.user_id:
         raise HTTPException(404, "tag not found")
     db.add_tag_to_card(card_id, payload.tag_id)
     return _card_to_dict(db.get_card(card_id))
 
 
 @app.delete("/api/cards/{card_id}/tags/{tag_id}")
-def detach_tag(card_id: int, tag_id: int):
+def detach_tag(card_id: int, tag_id: int, account: dict = Depends(get_current_account)):
+    card = _require_owned_card(card_id, account)
+    tag = db.get_tag(tag_id)
+    if not tag or tag.user_id != card.user_id:
+        raise HTTPException(404, "tag not found")
     if not db.remove_tag_from_card(card_id, tag_id):
         raise HTTPException(404, "tag not on card")
     return _card_to_dict(db.get_card(card_id))
@@ -573,6 +655,7 @@ async def _backfill_history_task(card_id: int, name: str, set_name: str, card_nu
 @app.post("/api/users/{user_id}/cards")
 def create_card(user_id: int, payload: CardCreate, background_tasks: BackgroundTasks,
                 account: dict = Depends(get_current_account)):
+    _require_owned_user(user_id, account)
     if not db.get_user(user_id):
         raise HTTPException(404, f"unknown user_id {user_id}")
     # db.Card has no `tags` column — that's the join table. Strip before
@@ -617,6 +700,7 @@ def create_card(user_id: int, payload: CardCreate, background_tasks: BackgroundT
 
 @app.patch("/api/cards/{card_id}")
 def patch_card(card_id: int, payload: CardPatch, account: dict = Depends(get_current_account)):
+    _require_owned_card(card_id, account)
     # Use exclude_unset so the client can explicitly null a field (e.g.
     # "reset image_url to clear bad art that got attached during lookup").
     # Pre-exclude_unset behavior dropped every None, so it was impossible to
@@ -658,7 +742,8 @@ def patch_card(card_id: int, payload: CardPatch, account: dict = Depends(get_cur
 
 @app.get("/api/cards/{card_id}/price-history")
 def card_price_history(card_id: int, since: Optional[str] = None,
-                       limit: Optional[int] = None):
+                       limit: Optional[int] = None,
+                       account: dict = Depends(get_current_account)):
     """Return the price-history series for one card, oldest-first.
 
     Query params:
@@ -667,9 +752,7 @@ def card_price_history(card_id: int, since: Optional[str] = None,
 
     Response: {points: [{at, price}], current: float|None, currency: 'USD'}.
     """
-    card = db.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "card not found")
+    card = _require_owned_card(card_id, account)
     points = db.get_price_history(card_id, since=since, limit=limit)
     return {
         "points":   points,
@@ -775,13 +858,11 @@ async def _resolve_jp_set_release_date(set_name: str) -> Optional[str]:
 
 
 @app.get("/api/cards/{card_id}/prediction")
-async def card_prediction(card_id: int):
+async def card_prediction(card_id: int, account: dict = Depends(get_current_account)):
     """Fair-value prediction for one card: point estimate + band, factor
     breakdown, grade-worthiness (raw cards only). 404 if the card doesn't
     exist; 503 if no model has been fit yet (corpus backfill not run)."""
-    card = db.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "card not found")
+    card = _require_owned_card(card_id, account)
 
     run = pricing_db.get_latest_model_run()
     if run is None:
@@ -852,6 +933,7 @@ def user_rankings(user_id: int, sort: str = "undervalued",
     EV. Cards with no stored features (never viewed via the prediction
     endpoint yet) are silently skipped rather than erroring — this is a
     best-effort view over whatever's already been computed."""
+    _require_owned_user(user_id, account)
     run = pricing_db.get_latest_model_run()
     if run is None:
         return {"rankings": []}
@@ -940,6 +1022,7 @@ def _sync_card_tags(card: "db.Card", desired_names: list[str]):
 
 @app.delete("/api/cards/{card_id}")
 def delete_card(card_id: int, account: dict = Depends(get_current_account)):
+    _require_owned_card(card_id, account)
     if not db.delete_card(card_id):
         raise HTTPException(404, "card not found")
     return {"deleted": True, "card_id": card_id}
@@ -954,6 +1037,7 @@ def bulk_delete_cards(body: BulkDeleteBody, account: dict = Depends(get_current_
     """Delete multiple cards in a single request."""
     deleted = []
     for card_id in body.card_ids:
+        _require_owned_card(card_id, account)
         if db.delete_card(card_id):
             deleted.append(card_id)
     return {"deleted": deleted, "count": len(deleted)}
@@ -964,17 +1048,15 @@ async def upload_card_photo(card_id: int, photo: UploadFile = File(...), account
     """Save a user-uploaded photo of this physical card. Stored under
     uploads/, served via /uploads/<filename>. Replaces any prior upload.
     HEIC files are converted to JPEG so all browsers can display them."""
-    card = db.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "card not found")
+    card = _require_owned_card(card_id, account)
 
     uploads_dir = Path(__file__).parent / "uploads"
     uploads_dir.mkdir(exist_ok=True)
-    suffix = Path(photo.filename or "card.jpg").suffix or ".jpg"
-    if suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".heic"}:
-        raise HTTPException(400, f"unsupported file type {suffix}")
+    suffix = _image_suffix(photo.filename or "card.jpg")
 
     raw = await photo.read()
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "file too large")
     ts = int(datetime.utcnow().timestamp() * 1000)
 
     # Convert HEIC → JPEG so all browsers can display it.
@@ -1015,16 +1097,13 @@ async def upload_card_photo(card_id: int, photo: UploadFile = File(...), account
 
 
 @app.delete("/api/cards/{card_id}/photo")
-def delete_card_photo(card_id: int):
+def delete_card_photo(card_id: int, account: dict = Depends(get_current_account)):
     """Remove the user-uploaded photo (if any). Catalogue image_url stays."""
-    card = db.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "card not found")
+    card = _require_owned_card(card_id, account)
     if card.photo_path:
-        # Best-effort delete the file too; ignore if already gone.
         try:
-            local = Path(__file__).parent / card.photo_path.lstrip("/")
-            if local.exists() and local.is_file():
+            local = safe_photo_file(card.photo_path, Path(__file__).parent / "uploads")
+            if local is not None and local.is_file():
                 local.unlink()
         except OSError:
             pass
@@ -1357,7 +1436,7 @@ async def _refresh_sealed_price(req: RefreshPriceRequest) -> dict:
 
 
 @app.post("/api/refresh-price")
-async def refresh_price(req: RefreshPriceRequest):
+async def refresh_price(req: RefreshPriceRequest, account: dict = Depends(get_current_account)):
     """Get a market-price estimate for a given condition or grade.
 
     Raw cards:   raw_price_resolver (PriceCharting sold anchor + eBay Browse trend).
@@ -1528,7 +1607,7 @@ async def refresh_price(req: RefreshPriceRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/sold-listings")
-async def sold_listings(req: SoldListingsRequest):
+async def sold_listings(req: SoldListingsRequest, account: dict = Depends(get_current_account)):
     """Return recent eBay sold listings for this card.
 
     Filters by language and (when graded) grader+grade. Each row carries
@@ -1581,7 +1660,7 @@ async def sold_listings(req: SoldListingsRequest):
 # ---------------------------------------------------------------------------
 
 @app.get("/api/cards/search")
-async def cards_search(q: str, limit: int = 20):
+async def cards_search(q: str, limit: int = 20, account: dict = Depends(get_current_account)):
     if len(q.strip()) < 2:
         return {"results": []}
     results = await card_lookup.search_cards(q, limit=limit)
@@ -1589,7 +1668,7 @@ async def cards_search(q: str, limit: int = 20):
 
 
 @app.get("/api/cards/search/jp")
-async def cards_search_jp(q: str = "", limit: int = 15):
+async def cards_search_jp(q: str = "", limit: int = 15, account: dict = Depends(get_current_account)):
     """Search TCGdex JP by name with PriceCharting prices attached.
 
     Replaces the direct client-side searchTCGdex(lang='ja') call so that JP
@@ -1604,7 +1683,7 @@ async def cards_search_jp(q: str = "", limit: int = 15):
 
 
 @app.get("/api/pricecharting/search")
-async def pricecharting_search(q: str, limit: int = 10):
+async def pricecharting_search(q: str, limit: int = 10, account: dict = Depends(get_current_account)):
     """Last-resort card-identity search — PriceCharting indexes some
     Chinese-exclusive sets (e.g. "Pokemon Chinese CSV4C") that TCGdex has
     registered as a set but never populated with card data. Scan falls back
@@ -1732,7 +1811,7 @@ async def _fetch_one_pokemontcg(client, card_id: str) -> dict:
 
 
 @app.post("/api/cards/batch")
-async def cards_batch(req: BatchCardsRequest):
+async def cards_batch(req: BatchCardsRequest, account: dict = Depends(get_current_account)):
     """Fetch up to 200 cards in parallel by ID. Replaces the per-card fan-out
     the React frontend was doing for the multi-language "Names" pipeline
     step — 89 sequential 100ms requests → 1 concurrent batch (~2s wall).
@@ -1826,10 +1905,11 @@ async def cards_batch(req: BatchCardsRequest):
 
 
 @app.delete("/api/identify-cache")
-def clear_identify_cache():
-    """Clear the OCR pHash + identity cache. Useful when an early identification
+def clear_identify_cache(account: dict = Depends(get_current_account)):
+    """Clear the OCR pHash + identity cache. Admin only. Useful when an early identification
     was wrong (e.g. a JP card got cached with EN data) and you want fresh
     lookups on the next photo upload."""
+    _require_admin(account)
     try:
         import ocr_engine
         cache_path = ocr_engine.DEFAULT_CACHE_PATH
@@ -1842,7 +1922,8 @@ def clear_identify_cache():
 
 
 @app.post("/api/trade/propose")
-def trade_propose(req: TradeRequest):
+def trade_propose(req: TradeRequest, account: dict = Depends(get_current_account)):
+    _require_owned_user(req.user_id, account)
     # Restrict the candidate pool by tag if requested. If filter_tag_id is
     # absent, default to the user's "for trade" tag (the seeded one) when
     # available — that's the natural intent of the trade flow.
@@ -1882,18 +1963,17 @@ from fastapi import Request
 
 
 @app.post("/api/identify")
-async def identify(request: Request, account: dict | None = Depends(get_current_account_optional)):
-    if account:
-        month = datetime.now(timezone.utc).strftime("%Y-%m")
-        is_pro = account_is_pro(account)
-        if not is_pro:
-            count = db.get_scan_count(account["id"], month)
-            if count >= FREE_SCAN_LIMIT:
-                raise HTTPException(
-                    status_code=429,
-                    detail={"error": "scan_limit_reached", "limit": FREE_SCAN_LIMIT, "used": count},
-                )
-        db.increment_scan_count(account["id"], month)
+async def identify(request: Request, account: dict = Depends(get_current_account)):
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    is_pro = account_is_pro(account)
+    if not is_pro:
+        count = db.get_scan_count(account["id"], month)
+        if count >= FREE_SCAN_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail={"error": "scan_limit_reached", "limit": FREE_SCAN_LIMIT, "used": count},
+            )
+    db.increment_scan_count(account["id"], month)
     try:
         return await _identify_inner(request)
     except HTTPException:
@@ -2030,19 +2110,22 @@ async def _identify_inner(request: Request):
     except ImportError as e:
         raise HTTPException(503, f"ocr_engine not available: {e}")
 
-    # Save the upload to a temp path
-    uploads_dir = Path(__file__).parent / "uploads"
-    uploads_dir.mkdir(exist_ok=True)
+    # OCR scratch files live under uploads/ocr/, which the public /uploads
+    # route does not serve (it only serves a single image filename).
+    ocr_dir = Path(__file__).parent / "uploads" / "ocr"
+    ocr_dir.mkdir(parents=True, exist_ok=True)
     raw_name = getattr(photo, "filename", None) or "card.jpg"
-    suffix = Path(raw_name).suffix.lower() or ".jpg"
-    tmp_path = uploads_dir / f"upload_{int(datetime.utcnow().timestamp() * 1000)}{suffix}"
+    suffix = _image_suffix(raw_name if Path(raw_name).suffix else "card.jpg")
+    tmp_path = ocr_dir / f"upload_{int(datetime.utcnow().timestamp() * 1000)}{suffix}"
     try:
         body = await photo.read()
     except Exception as e:
         log.exception("photo.read() failed")
-        raise HTTPException(400, f"could not read uploaded photo: {e}")
+        raise HTTPException(400, "could not read uploaded photo")
     if not body:
         raise HTTPException(400, "empty photo upload")
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "file too large")
     tmp_path.write_bytes(body)
 
     try:
@@ -2253,7 +2336,20 @@ UPLOADS_DIR.mkdir(exist_ok=True)
 _DIST_DIR = STATIC_DIR / "dist"
 FRONTEND_DIR = _DIST_DIR if (_DIST_DIR / "index.html").exists() else STATIC_DIR
 
-app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+@app.get("/uploads/{filename}")
+def serve_upload(filename: str):
+    """Serve a user-uploaded card photo. Image suffixes only, no path segments,
+    nosniff — so an uploaded file cannot run as HTML on this origin."""
+    path = safe_photo_file(f"/uploads/{filename}", UPLOADS_DIR)
+    if path is None or not path.is_file():
+        raise HTTPException(404, "not found")
+    return FileResponse(
+        path,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": f'inline; filename="{path.name}"',
+        },
+    )
 
 
 @app.get("/")

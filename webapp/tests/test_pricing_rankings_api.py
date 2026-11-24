@@ -26,14 +26,11 @@ def fresh_pricing_db():
 
 
 @pytest.fixture(autouse=True)
-def fake_auth():
-    """/api/users/{user_id}/rankings now requires get_current_account (Fix 4
-    of the final-review pass). Override the dependency with a minimal fake
-    account rather than exercising real Supabase JWT verification, matching
-    FastAPI's standard TestClient auth-bypass pattern -- this codebase has no
-    existing convention for authenticated-endpoint tests (test_auth.py only
-    unit-tests get_current_account directly, not through an endpoint)."""
+def fake_auth(monkeypatch):
+    """/api/users/{user_id}/rankings requires a JWT and ownership of user_id.
+    Override both rather than exercising Supabase or Postgres."""
     app_module.app.dependency_overrides[get_current_account] = lambda: _FAKE_ACCOUNT
+    monkeypatch.setattr(app_module.db, "profile_ids_for_account", lambda account_id: [1])
     yield
     app_module.app.dependency_overrides.pop(get_current_account, None)
 
