@@ -126,7 +126,7 @@ def _extract_market_price(card: dict, variant: Optional[str] = None) -> Optional
         for key in _preferred_keys_for_variant(variant):
             data = prices.get(key)
             if data and data.get("market"):
-                return float(data["market"])
+                return float(data["market"]), "tcgplayer"
 
         # 2. No variant hint — pick a default. Prefer Unlimited prints
         # (unlimitedHolofoil > holofoil > normal). NEVER pick 1stEditionHolofoil
@@ -136,17 +136,24 @@ def _extract_market_price(card: dict, variant: Optional[str] = None) -> Optional
         for key in ("unlimitedHolofoil", "holofoil", "normal"):
             data = prices.get(key)
             if data and data.get("market"):
-                return float(data["market"])
+                return float(data["market"]), "tcgplayer"
 
-        # 3. Last resort — any market price we can find.
-        candidates = [v.get("market") for v in prices.values() if v.get("market")]
+        # 3. Last resort — any non-1st-Edition market price. 1st Edition is
+        # 2-5× Unlimited and is only used when the variant asked for it
+        # (handled in step 1).
+        candidates = [
+            v.get("market") for key, v in prices.items()
+            if v.get("market") and "1st" not in key.lower()
+        ]
         if candidates:
-            return float(max(candidates))
+            return float(max(candidates)), "tcgplayer"
 
-    # Cardmarket fallback if TCGplayer is empty
+    # Cardmarket prices are EUR. TCGplayer market prices are already USD.
     cm = (card.get("cardmarket") or {}).get("prices") or {}
     avg = cm.get("averageSellPrice") or cm.get("trendPrice")
-    return float(avg) if avg else None
+    if avg:
+        return round(float(avg) * 1.10, 2), "cardmarket"
+    return None, "tcgplayer"
 
 
 # --- Distinct-print variant explosion --------------------------------------
@@ -217,7 +224,9 @@ def _explode_variants(card: dict) -> list[tuple[Optional[str], Optional[float]]]
 
     cm = (card.get("cardmarket") or {}).get("prices") or {}
     avg = cm.get("averageSellPrice") or cm.get("trendPrice")
-    return [(None, float(avg) if avg else None)]
+    # Cardmarket figures are EUR.
+    usd = round(float(avg) * 1.10, 2) if avg else None
+    return [(None, usd)]
 
 
 def _to_result(card: dict, variant: Optional[str] = None,
@@ -233,8 +242,9 @@ def _to_result(card: dict, variant: Optional[str] = None,
     images = card.get("images") or {}
     if market_price_override is not None:
         price = market_price_override
+        source = "cardmarket" if not (card.get("tcgplayer") or {}).get("prices") else "tcgplayer"
     else:
-        price = _extract_market_price(card, variant=variant)
+        price, source = _extract_market_price(card, variant=variant)
     return CardLookupResult(
         name=card.get("name") or "",
         set_name=(card.get("set") or {}).get("name"),
@@ -246,6 +256,7 @@ def _to_result(card: dict, variant: Optional[str] = None,
         tcg_id=card.get("id"),
         language="english",
         variant=variant_label,
+        source=source,
     )
 
 

@@ -154,6 +154,12 @@ def _init_cache():
     conn.close()
 
 
+def _cache_key(url: str, *, kind: str, period_days: int) -> str:
+    """The fetch URL has no date window, and two callers store different
+    payload shapes under it. Keep those rows apart."""
+    return f"{url}#kind={kind}&days={int(period_days)}"
+
+
 def _cache_get(url: str) -> Optional[dict]:
     _init_cache()
     conn = sqlite3.connect(str(CACHE_DB))
@@ -228,9 +234,10 @@ async def lookup_sold_listings(
         condition=None if is_graded else condition,
     )
     url = build_ebay_sold_url(query)
+    cache_key = _cache_key(url, kind="listings", period_days=period_days)
 
     # Cache lookup — re-hydrate the SaleRecord dicts from JSON.
-    cached = _cache_get(url)
+    cached = _cache_get(cache_key)
     if cached and "sales" in cached:
         return EbaySoldListings(
             median_usd=cached.get("median_usd"),
@@ -267,7 +274,7 @@ async def lookup_sold_listings(
         "high_usd": quote.high_usd if quote else None,
         "sales": sale_dicts,
     }
-    _cache_set(url, payload)
+    _cache_set(cache_key, payload)
     return EbaySoldListings(
         **{k: v for k, v in payload.items() if k != "sales"},
         sold_url=url,
@@ -372,8 +379,9 @@ async def lookup_sealed_recent_n_mean(
         language=language,
     )
     url = build_ebay_sealed_url(query)
+    cache_key = _cache_key(url, kind="sealed", period_days=period_days)
 
-    cached = _cache_get(url)
+    cached = _cache_get(cache_key)
     if cached and "sales" in cached:
         sales = cached.get("sales", [])[:max(n * 2, 25)]
         sales_sorted = sorted(sales, key=lambda s: s.get("sold_date") or "", reverse=True)
@@ -415,7 +423,7 @@ async def lookup_sealed_recent_n_mean(
         "sales": sale_dicts,
         "raw_sample_size": len(parsed),
     }
-    _cache_set(url, payload)
+    _cache_set(cache_key, payload)
 
     picked = sale_dicts[:n]
     prices = [float(s["price_usd"]) for s in picked if s.get("price_usd") is not None]
@@ -452,9 +460,13 @@ async def lookup_raw_price(name: str, set_name: str, card_number: str,
     )
     query = CardQuery(card=identity, is_graded=False, condition=condition)
     url = build_ebay_sold_url(query)
+    cache_key = _cache_key(url, kind="aggregate", period_days=period_days)
 
-    cached = _cache_get(url)
-    if cached:
+    cached = _cache_get(cache_key)
+    # Listings payloads have `sales` and no `sold_url`. Don't build
+    # EbaySoldResult from those — it raises TypeError and the JP fallback
+    # then skips sold comps for the rest of the cache TTL.
+    if cached and cached.get("sold_url") and "sales" not in cached:
         return EbaySoldResult(**{**cached, "cached": True})
 
     html = await _fetch_ebay_html(url)
@@ -475,5 +487,5 @@ async def lookup_raw_price(name: str, set_name: str, card_number: str,
         "high_usd": quote.high_usd,
         "sold_url": url,
     }
-    _cache_set(url, payload)
+    _cache_set(cache_key, payload)
     return EbaySoldResult(**payload, cached=False)
