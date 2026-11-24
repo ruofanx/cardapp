@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import api from '../api.js'
 import { CardArt, Icon, NavBar, NavBackButton, Price, fmtPrice, tagNamesOf } from '../components.jsx'
 
-export default function WantListScreen({ navigate, goBack, collection = [], updateCard, currentUser, identifyCard }) {
+export default function WantListScreen({ navigate, goBack, collection = [], updateCard, addToCollection, currentUser, identifyCard }) {
   const [search, setSearch] = useState('')
   const [adding, setAdding] = useState(false)
   const [candidates, setCandidates] = useState([])
@@ -50,8 +50,9 @@ export default function WantListScreen({ navigate, goBack, collection = [], upda
   }
 
   async function addWant(card) {
+    if (!addToCollection) return
     try {
-      await api.addCard({
+      await addToCollection({
         name: card.name,
         set: card.set,
         code: card.code || card.number,
@@ -59,8 +60,9 @@ export default function WantListScreen({ navigate, goBack, collection = [], upda
         image_url: card.image_url || card.imageUrl,
         tags: ['wishlist'],
         condition: 'NM',
+        purchase_price: null,
+        product_type: card.product_type || 'card',
       })
-      // Optimistic: reload will pick it up via reloadCollection in parent
       setAdding(false)
       setSearchQ('')
       setCandidates([])

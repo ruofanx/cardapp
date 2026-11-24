@@ -39,10 +39,13 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../.env"))
 
-try:
+# psycopg2 is always installed, so importing db_postgres succeeds even when
+# DATABASE_URL is unset. Choose the backend from the env var: production
+# (Railway/Supabase) sets it; local dev falls back to SQLite.
+if os.environ.get("DATABASE_URL"):
     import db_postgres as db
-except Exception:
-    import db  # local SQLite fallback during development
+else:
+    import db
 
 from supabase_storage import is_configured as _storage_configured, get_signed_url as _sign_photo
 from auth import get_current_account, get_current_account_optional, get_current_profile, get_current_profile_optional
@@ -179,7 +182,10 @@ def health_check():
     info: dict = {"ok": True, "ts": datetime.now(timezone.utc).isoformat()}
     try:
         with db.connect() as conn:
-            row = conn.execute("SELECT COUNT(*) AS n FROM cards").fetchone()
+            # Both backends expose cursor(); a psycopg2 connection has no execute().
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) AS n FROM cards")
+            row = cur.fetchone()
             info["cards"] = row["n"] if row else 0
     except Exception as e:
         info["db_error"] = str(e)
@@ -244,6 +250,7 @@ class CardPatch(BaseModel):
     # photo_path is set only by the photo upload route. Clients must not
     # write it — a crafted path was unlinked on DELETE (path traversal).
     product_type: Optional[str] = None
+    alert_price: Optional[float] = None
     # When provided, this REPLACES the card's tag set. Names are matched
     # case-insensitively against the user's existing tags; new names are
     # auto-created. Pass [] to clear all tags.
@@ -465,15 +472,15 @@ def export_collection(profile: dict = Depends(get_current_profile)):
         "Notes", "Tags", "Image URL", "Added",
     ])
     for c in cards:
-        tags = ", ".join(t if isinstance(t, str) else (t.get("name") or "") for t in (c.tags or []))
+        tags = ", ".join(_export_tag_name(t) for t in (c.tags or []))
         gain_loss = ""
         if c.current_market_price and c.purchase_price and c.purchase_price > 0:
             gain_loss = f"{((c.current_market_price - c.purchase_price) / c.purchase_price * 100):.1f}%"
         writer.writerow([
             c.name or "",
             c.set_name or "",
-            c.card_code or "",
-            "JP" if c.language == "japanese" else "EN",
+            c.card_number or "",
+            _export_lang(c.language),
             c.condition or "NM",
             "Yes" if c.is_graded else "No",
             c.grade_company or "",
@@ -485,7 +492,7 @@ def export_collection(profile: dict = Depends(get_current_profile)):
             c.notes or "",
             tags,
             c.image_url or "",
-            c.created_at.strftime("%Y-%m-%d") if c.created_at else "",
+            _export_date(c.created_at),
         ])
 
     buf.seek(0)
@@ -2368,12 +2375,35 @@ app.mount("/", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _export_tag_name(t) -> str:
+    if isinstance(t, str):
+        return t
+    name = getattr(t, "name", None)
+    if name:
+        return name
+    if isinstance(t, dict):
+        return t.get("name") or ""
+    return ""
+
+
+def _export_lang(language: str | None) -> str:
+    return {"japanese": "JP", "chinese": "CH"}.get((language or "").lower(), "EN")
+
+
+def _export_date(value) -> str:
+    if not value:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    return str(value)[:10]
+
+
 def _card_to_dict(c: db.Card) -> dict:
     d = c.__dict__.copy()
     d["gain_loss"] = c.gain_loss()
     d["gain_loss_pct"] = c.gain_loss_pct()
     d["tags"] = [_tag_to_dict(t) for t in (c.tags or [])]
-    return d
+    return _resolve_photo(d)
 
 
 def _tag_to_dict(t: db.Tag) -> dict:
